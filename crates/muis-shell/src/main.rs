@@ -304,20 +304,32 @@ const OPENCODE_PLUGIN_LEGACY: &str = "muis.mjs";
 const OPENCODE_PLUGIN_MARKER: &str = "muis-plugin";
 const OPENCODE_PLUGIN_SRC: &str = include_str!("../opencode-plugin/muis.js");
 
-/// TUI plugin: exact route tracking. Unlike server plugins, opencode only
-/// loads TUI entrypoints listed in `tui.json(c)`, so the installer also
-/// maintains one entry in `tui.json` (leaving `tui.jsonc` untouched).
-const OPENCODE_TUI_FILE: &str = "muis-tui.mjs";
+/// TUI plugin: exact route tracking. opencode 2.x discovers TUI entrypoints
+/// from a plugin *directory* under its global plugin dir (`<id>/tui.js`), and
+/// rejects the V1 single-file module listed in `tui.json` ("Invalid V2 TUI
+/// plugin module"). The directory is picked up by discovery, so nothing is
+/// registered in the terminal config.
+const OPENCODE_TUI_DIR: &str = "muis-tui";
+const OPENCODE_TUI_FILE: &str = "tui.js";
 const OPENCODE_TUI_MARKER: &str = "muis-tui-plugin";
-const OPENCODE_TUI_SRC: &str = include_str!("../opencode-plugin/muis-tui.mjs");
+const OPENCODE_TUI_SRC: &str = include_str!("../opencode-plugin/muis-tui.js");
+/// V1 single-file entrypoint, removed on install.
+const OPENCODE_TUI_LEGACY: &str = "muis-tui.mjs";
 
 /// Install/update the muis opencode plugins. Writes a file when missing and
 /// updates it when the existing file is ours (carries the matching marker);
-/// never touches a foreign file. The TUI entry is registered in `tui.json`
-/// without editing the user's `tui.jsonc`. Returns the server plugin path.
+/// never touches a foreign file. The TUI plugin needs no terminal-config
+/// entry: opencode discovers the plugin directory itself. Returns the server
+/// plugin path.
 #[tauri::command]
 fn install_opencode_plugin() -> Result<String, String> {
     let dir = opencode_plugins_dir().ok_or("no config directory")?;
+    install_plugins(&dir)
+}
+
+/// Write/refresh the plugin files under `dir` (the global opencode plugin
+/// directory) and clean up the V1 layout. See `install_opencode_plugin`.
+fn install_plugins(dir: &Path) -> Result<String, String> {
     let path = dir.join(OPENCODE_PLUGIN_FILE);
     let ours = match std::fs::read_to_string(&path) {
         Ok(existing) => existing.contains(OPENCODE_PLUGIN_MARKER),
@@ -333,63 +345,80 @@ fn install_opencode_plugin() -> Result<String, String> {
     }
 
     // The TUI plugin is a separate entrypoint (opencode forbids one module
-    // exporting both). Its file lives beside the server plugin and is
-    // referenced from the global `tui.json`.
-    let tui_path = dir.join(OPENCODE_TUI_FILE);
+    // exporting both). It lives in its own plugin directory, which opencode
+    // discovers; the V1 single file and its `tui.json`/`cli.json` entry are
+    // cleaned up so they cannot fail to load on every start.
+    let tui_path = dir.join(OPENCODE_TUI_DIR).join(OPENCODE_TUI_FILE);
     let tui_ours = match std::fs::read_to_string(&tui_path) {
         Ok(existing) => existing.contains(OPENCODE_TUI_MARKER),
         Err(_) => true,
     };
     if tui_ours {
-        if let Err(e) = std::fs::write(&tui_path, OPENCODE_TUI_SRC) {
-            log::warn!("could not write TUI plugin: {e}");
-        } else if let Err(e) = register_tui_plugin(&tui_path) {
-            log::warn!("could not register TUI plugin: {e}");
+        let tui_dir = dir.join(OPENCODE_TUI_DIR);
+        let written = std::fs::create_dir_all(&tui_dir)
+            .map_err(|e| e.to_string())
+            .and_then(|()| std::fs::write(&tui_path, OPENCODE_TUI_SRC).map_err(|e| e.to_string()));
+        match written {
+            Ok(()) => remove_legacy_tui_plugin(dir),
+            Err(e) => log::warn!("could not write TUI plugin: {e}"),
         }
     }
     Ok(path.display().to_string())
 }
 
-/// Add (or refresh) the TUI plugin entry in the global `tui.json`, leaving
-/// every other key and the user's `tui.jsonc` alone. A malformed or
-/// non-object file is reported and left untouched.
-fn register_tui_plugin(path: &Path) -> Result<(), String> {
-    let config = path
-        .parent()
-        .and_then(Path::parent)
-        .map(|dir| dir.join("tui.json"))
-        .ok_or("no config directory")?;
-    let wanted = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf())
-        .to_string_lossy()
-        .into_owned();
-    let mut root: serde_json::Value = match std::fs::read_to_string(&config) {
-        Ok(text) if !text.trim().is_empty() => serde_json::from_str(&text)
-            .map_err(|e| format!("{} is not JSON: {e}", config.display()))?,
-        _ => serde_json::json!({}),
+/// Drop the V1 TUI plugin file and the config entries that pointed at it,
+/// leaving every other setting alone. Best effort: a malformed config is
+/// reported and never rewritten.
+fn remove_legacy_tui_plugin(dir: &Path) {
+    let legacy = dir.join(OPENCODE_TUI_LEGACY);
+    if std::fs::read_to_string(&legacy).is_ok_and(|s| s.contains(OPENCODE_TUI_MARKER)) {
+        let _ = std::fs::remove_file(&legacy);
+    }
+    let Some(config) = dir.parent() else { return };
+    // `cli.json` is the 2.x terminal config; `tui.json` is the 1.x file that
+    // held the same entry.
+    for (name, key) in [("cli.json", "plugins"), ("tui.json", "plugin")] {
+        if let Err(e) = prune_plugin_entry(&config.join(name), key, OPENCODE_TUI_LEGACY) {
+            log::warn!("could not clean up {}: {e}", config.join(name).display());
+        }
+    }
+}
+
+/// Remove one entry whose file name matches `file` from the plugin list under
+/// `key`. Returns whether the file changed; unrelated entries and settings are
+/// preserved.
+fn prune_plugin_entry(config: &Path, key: &str, file: &str) -> Result<bool, String> {
+    let text = match std::fs::read_to_string(config) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e.to_string()),
     };
-    let object = root
-        .as_object_mut()
-        .ok_or_else(|| format!("{} is not a JSON object", config.display()))?;
-    let entry = object
-        .entry("plugin")
-        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
-    let list = entry
+    if text.trim().is_empty() {
+        return Ok(false);
+    }
+    let mut root: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("{} is not JSON: {e}", config.display()))?;
+    let Some(object) = root.as_object_mut() else {
+        return Err(format!("{} is not a JSON object", config.display()));
+    };
+    let Some(list) = object.get_mut(key) else {
+        return Ok(false);
+    };
+    let list = list
         .as_array_mut()
-        .ok_or_else(|| format!("{}: plugin is not an array", config.display()))?;
-    let before = list.clone();
+        .ok_or_else(|| format!("{}: {key} is not an array", config.display()))?;
+    let before = list.len();
     list.retain(|item| {
         item.as_str()
-            .map(|s| !s.ends_with(OPENCODE_TUI_FILE) && s != wanted)
+            .map(|s| Path::new(s).file_name().and_then(|n| n.to_str()) != Some(file))
             .unwrap_or(true)
     });
-    list.push(serde_json::Value::String(wanted));
-    if *list == before {
-        return Ok(());
+    if list.len() == before {
+        return Ok(false);
     }
     let json = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
-    persist::write_json(&config, &json)
+    persist::write_json(config, &json)?;
+    Ok(true)
 }
 
 /// Open an http(s) URL in the user's browser (OSC 8 hyperlinks). Only
@@ -571,10 +600,28 @@ mod tests {
 
     #[test]
     fn tui_plugin_is_marked_and_installed_separately() {
-        assert!(OPENCODE_TUI_FILE.ends_with(".mjs"));
+        // opencode 2.x only loads a TUI entrypoint from a plugin directory.
+        assert!(OPENCODE_TUI_FILE.ends_with(".js"));
         assert_ne!(OPENCODE_TUI_FILE, OPENCODE_PLUGIN_FILE);
+        assert_ne!(OPENCODE_TUI_DIR, OPENCODE_PLUGIN_FILE);
         assert!(OPENCODE_TUI_SRC.contains(OPENCODE_TUI_MARKER));
         assert!(OPENCODE_TUI_SRC.contains("muis-agent"));
+    }
+
+    #[test]
+    fn tui_plugin_uses_the_v2_definition_shape() {
+        // opencode 2.x rejects the V1 `{ id, tui(api) }` module with
+        // "Invalid V2 TUI plugin module" and only reports it in the TUI log,
+        // so the installed file must default-export `{ id, setup }` and read
+        // the route from the context instead of the removed `api.route`.
+        assert!(OPENCODE_TUI_SRC.contains("export default"));
+        assert!(OPENCODE_TUI_SRC.contains("id: \"muis-tui\""));
+        assert!(OPENCODE_TUI_SRC.contains("setup("));
+        assert!(!OPENCODE_TUI_SRC.contains("\n  tui:"));
+        assert!(!OPENCODE_TUI_SRC.contains("api.route.current"));
+        assert!(!OPENCODE_TUI_SRC.contains("api?.route"));
+        assert!(OPENCODE_TUI_SRC.contains("ui.router.current()"));
+        assert!(OPENCODE_TUI_SRC.contains("MUIS_TAB_ID"));
     }
 
     #[test]
@@ -595,33 +642,94 @@ mod tests {
     }
 
     #[test]
-    fn tui_config_registration_merges_and_is_idempotent() {
-        let root = std::env::temp_dir().join(format!("muis-tui-config-{}", std::process::id()));
-        let plugins = root.join("opencode").join("plugins");
-        std::fs::create_dir_all(&plugins).unwrap();
-        let plugin = plugins.join(OPENCODE_TUI_FILE);
-        std::fs::write(&plugin, OPENCODE_TUI_SRC).unwrap();
+    fn install_writes_both_plugins_and_cleans_up_v1() {
+        let root = std::env::temp_dir().join(format!("muis-install-{}", std::process::id()));
+        let dir = root.join("opencode").join("plugins");
+        std::fs::create_dir_all(&dir).unwrap();
+        // V1 leftovers: the single-file TUI plugin and its config entry.
+        std::fs::write(
+            dir.join(OPENCODE_TUI_LEGACY),
+            format!("// {OPENCODE_TUI_MARKER}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("opencode").join("cli.json"),
+            r#"{"theme":{"name":"x"},"plugins":["/old/plugins/muis-tui.mjs","keep-me"]}"#,
+        )
+        .unwrap();
 
-        let config = root.join("opencode").join("tui.json");
-        std::fs::write(&config, r#"{"theme":"x","plugin":["someone-else"]}"#).unwrap();
-        register_tui_plugin(&plugin).unwrap();
-        register_tui_plugin(&plugin).unwrap();
+        let path = install_plugins(&dir).unwrap();
+
+        assert_eq!(path, dir.join(OPENCODE_PLUGIN_FILE).display().to_string());
+        assert!(dir.join(OPENCODE_PLUGIN_FILE).is_file());
+        let tui = dir.join(OPENCODE_TUI_DIR).join(OPENCODE_TUI_FILE);
+        assert!(tui.is_file());
+        assert!(std::fs::read_to_string(&tui).unwrap() == OPENCODE_TUI_SRC);
+        assert!(!dir.join(OPENCODE_TUI_LEGACY).exists());
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("opencode").join("cli.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(config["theme"]["name"], "x");
+        assert_eq!(config["plugins"], serde_json::json!(["keep-me"]));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_keeps_foreign_plugin_files() {
+        let root = std::env::temp_dir().join(format!("muis-foreign-{}", std::process::id()));
+        let dir = root.join("opencode").join("plugins");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(OPENCODE_PLUGIN_FILE), "// not ours\n").unwrap();
+        std::fs::write(dir.join(OPENCODE_TUI_LEGACY), "// not ours\n").unwrap();
+
+        install_plugins(&dir).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.join(OPENCODE_PLUGIN_FILE)).unwrap(),
+            "// not ours\n"
+        );
+        // The legacy file is only removed when it carries our marker.
+        assert!(dir.join(OPENCODE_TUI_LEGACY).exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn legacy_tui_entry_is_pruned_and_config_preserved() {
+        let root = std::env::temp_dir().join(format!("muis-tui-config-{}", std::process::id()));
+        let config = root.join("opencode").join("cli.json");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config,
+            r#"{"theme":{"name":"x"},"plugins":["someone-else","/old/plugins/muis-tui.mjs",{"package":"p"}]}"#,
+        )
+        .unwrap();
+
+        assert!(prune_plugin_entry(&config, "plugins", OPENCODE_TUI_LEGACY).unwrap());
+        assert!(!prune_plugin_entry(&config, "plugins", OPENCODE_TUI_LEGACY).unwrap());
 
         let value: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
-        assert_eq!(value["theme"], "x");
-        let list = value["plugin"].as_array().unwrap();
+        assert_eq!(value["theme"]["name"], "x");
         assert_eq!(
-            list.iter()
-                .filter(|v| v.as_str() == Some("someone-else"))
-                .count(),
-            1
+            value["plugins"],
+            serde_json::json!(["someone-else", {"package": "p"}])
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_or_non_list_config_is_left_alone() {
+        let root = std::env::temp_dir().join(format!("muis-tui-absent-{}", std::process::id()));
+        let config = root.join("opencode").join("cli.json");
+        assert!(!prune_plugin_entry(&config, "plugins", OPENCODE_TUI_LEGACY).unwrap());
+
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, r#"{"plugins":"not-a-list"}"#).unwrap();
+        assert!(prune_plugin_entry(&config, "plugins", OPENCODE_TUI_LEGACY).is_err());
         assert_eq!(
-            list.iter()
-                .filter(|v| v.as_str().is_some_and(|s| s.ends_with(OPENCODE_TUI_FILE)))
-                .count(),
-            1
+            std::fs::read_to_string(&config).unwrap(),
+            r#"{"plugins":"not-a-list"}"#
         );
         let _ = std::fs::remove_dir_all(&root);
     }
