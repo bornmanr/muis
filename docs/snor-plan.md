@@ -23,6 +23,8 @@ covers the architecture, a phased build, and the decisions still open.
   toggled with `ctrl+shift+a` or the mouse indicator next to settings.
 - Settings: model path, `llama-server` override, context size, GPU
   layers, attached scrollback lines, and opt-in secret masking.
+- History: per-workspace conversations are restored from `snor.json`.
+  Attached terminal context is kept in memory only and never written.
 - The slot: `SidePanelRegistry` (`src-ui/src/panels.ts`) with the docked
   right-side host in `src-ui/src/main.ts`; the dock now lives in the
   `.main` row and panels provide a mount callback.

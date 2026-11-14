@@ -146,6 +146,24 @@ fn sessions_save(json: String) -> Result<(), String> {
     persist::write_json(&muis_core::paths::sessions_file(), &json)
 }
 
+/// Snor conversations: prompts and answers only, never attached terminal
+/// context. Test mode starts empty and never writes.
+#[tauri::command]
+fn snor_history_load() -> Result<String, String> {
+    if test_mode() {
+        return Ok(String::new());
+    }
+    persist::read_text(&muis_core::paths::snor_history_file())
+}
+
+#[tauri::command]
+fn snor_history_save(json: String) -> Result<(), String> {
+    if test_mode() {
+        return Ok(());
+    }
+    persist::write_json(&muis_core::paths::snor_history_file(), &json)
+}
+
 /// Current git branch for a cwd; empty string when not a repo (or git
 /// missing/slow — the caller treats empty as "no pill data").
 #[tauri::command]
@@ -571,6 +589,8 @@ fn main() {
             config_save,
             sessions_load,
             sessions_save,
+            snor_history_load,
+            snor_history_save,
             git_branch,
             install_opencode_plugin,
             opencode_sessions,

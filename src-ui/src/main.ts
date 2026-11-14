@@ -14,7 +14,7 @@ import { QueryHistory } from "./history";
 import { WorkerClient, type Transport } from "./worker";
 import { SearchController } from "./search";
 import { SidePanelRegistry } from "./panels";
-import { buildSnorContext, snorModelName, snorPrompt, snorStateLabel } from "./snor";
+import { buildSnorContext, parseSnorHistory, serializeSnorHistory, snorModelName, snorPrompt, snorStateLabel, type SnorTurn } from "./snor";
 import { newActivityState, isTabBusy, anyTabBusy, forgetTab } from "./activity";
 import { OscParser, type NotifyEvent } from "./osc";
 import { CommandTracker, tabLabel as tabLabelOf } from "./commandbar";
@@ -1575,11 +1575,6 @@ function startPanelResize(e: PointerEvent): void {
 
 /* ---------------- Snor assistant panel ---------------- */
 
-interface SnorTurn {
-  role: "user" | "assistant";
-  text: string;
-}
-
 interface SnorEngineStatus {
   state: "stopped" | "starting" | "ready" | "streaming" | "error";
   model: string | null;
@@ -1616,6 +1611,35 @@ function snorConversation(): SnorTurn[] {
     snorConversations.set(id, list);
   }
   return list;
+}
+
+let snorSaveTimer: number | null = null;
+
+/** Debounced save; attached terminal context is never serialized. */
+function scheduleSnorSave(): void {
+  if (!IN_TAURI) return;
+  if (snorSaveTimer !== null) window.clearTimeout(snorSaveTimer);
+  snorSaveTimer = window.setTimeout(() => {
+    snorSaveTimer = null;
+    void invoke("snor_history_save", {
+      json: serializeSnorHistory(snorConversations),
+    }).catch(() => {});
+  }, 400);
+}
+
+/** Load saved conversations once at startup; a corrupt file is empty. */
+async function loadSnorHistory(): Promise<void> {
+  if (!IN_TAURI) return;
+  try {
+    const raw = await invoke<string>("snor_history_load");
+    const saved = parseSnorHistory(raw ?? "");
+    for (const [id, turns] of Object.entries(saved.conversations)) {
+      if (!snorConversations.has(id)) snorConversations.set(id, turns);
+    }
+    if (sidePanels.visible() === "snor") renderSnor();
+  } catch {
+    /* history is best-effort */
+  }
 }
 
 function toggleSnor(): void {
@@ -1684,7 +1708,7 @@ async function snorSend(): Promise<void> {
   }
   const context = currentSnorContext();
   const conversation = snorConversation();
-  conversation.push({ role: "user", text: snorPrompt(text, context.text) });
+  conversation.push({ role: "user", text, context: context.text || undefined });
   conversation.push({ role: "assistant", text: "" });
   snorActive = conversation;
   if (snorInputEl) snorInputEl.value = "";
@@ -1701,13 +1725,15 @@ async function snorSend(): Promise<void> {
       );
     }
     const request = {
-      messages: conversation
-        .slice(0, -1)
-        .map((turn) => ({ role: turn.role, content: turn.text })),
+      messages: conversation.slice(0, -1).map((turn) => ({
+        role: turn.role,
+        content: turn.role === "user" ? snorPrompt(turn.text, turn.context ?? "") : turn.text,
+      })),
       system: cfg.snor.systemPrompt,
       temperature: cfg.snor.temperature,
     };
     await invoke("snor_send", { request });
+    scheduleSnorSave();
   } catch (err) {
     snorFailed(err);
   }
@@ -1722,12 +1748,14 @@ function snorFailed(err: unknown): void {
   else conversation.push({ role: "assistant", text: `⚠ ${message}` });
   snorStatus = { ...snorStatus, state: "error", error: message };
   renderSnor();
+  scheduleSnorSave();
 }
 
 function snorClear(): void {
   snorActive = null;
   snorConversations.set(store.currentWorkspace()?.id ?? "none", []);
   renderSnor();
+  scheduleSnorSave();
 }
 
 async function chooseSnorModel(): Promise<void> {
@@ -1844,6 +1872,9 @@ function renderSnor(): void {
     row.append(el("div", "snor-role", turn.role === "user" ? "you" : "snor"));
     const text = el("div", "snor-text", turn.text);
     row.append(text);
+    if (turn.context) {
+      row.append(el("div", "snor-msg-context", "terminal context attached (not saved)"));
+    }
     snorLogEl.append(row);
     if (turn.role === "assistant" && turn === conversation[conversation.length - 1]) {
       snorLiveEl = text;
@@ -1892,6 +1923,7 @@ if (IN_TAURI) {
     snorActive = null;
     snorStatus = { ...snorStatus, state: "ready", error: null };
     renderSnor();
+    scheduleSnorSave();
   });
   void listen<{ message: string }>("snor-error", (event) => snorFailed(event.payload.message));
   void listen<SnorEngineStatus>("snor-status", (event) => applySnorStatus(event.payload));
@@ -2938,6 +2970,8 @@ async function init(): Promise<void> {
     } catch {
       reportDebugStage("config-load-failed");
     }
+    // Saved Snor conversations are state; a corrupt file starts empty.
+    await loadSnorHistory();
     // Restore where we left off. A corrupt file starts fresh, never broken.
     try {
       const saved = await invoke<string>("sessions_load");
