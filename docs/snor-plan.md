@@ -224,12 +224,10 @@ becomes fully agentic.
 
 ## Panel UX (v1)
 
-The dock exists but is not wired: `panelSlot` is appended to `#app` (a
-column), so it renders under the terminal. Move it into `.main` after
-`center`, make it resizable (default 360-420 px), remember the width per
-workspace, and add a toggle shortcut plus a statusbar button.
-`SidePanelRegistry` needs a render callback or event so a registered
-panel can own its body.
+The dock is wired: `panelSlot` sits inside `.main` after `center`, the
+panel is resizable (280-900 px, width persisted globally), and a
+statusbar button plus `ctrl+shift+a` toggle it. A registered panel owns
+its body through the `mount` callback on `SidePanelDef`.
 
 Layout:
 
@@ -541,9 +539,8 @@ The Phase 0 spike settles the v1 surface, backend, and distribution:
   fetches implicitly.
 - **Lifecycle:** one shared server per app, lazy start. The unload
   policy (close panel, idle timeout, or keep resident) is still open.
-- **Panel:** right dock, resizable (360-420 px), toggle + statusbar
-  button. The reserved slot must move from the column container into
-  the `.main` row first.
+- **Panel:** right dock, resizable (280-900 px), toggle shortcut and a
+  statusbar button. The dock now lives in the `.main` row.
 - **Workspace context:** curated `ContextProvider` cards and
   deterministic slash commands in v1. Read-only tools come next; no
   free-form retrieval or model-chosen queries.
