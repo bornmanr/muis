@@ -397,7 +397,20 @@ newTabBtn.addEventListener("click", () => {
 const gearBtn = el("button", "newtab settings", "⚙");
 gearBtn.title = "Settings (ctrl + ,)";
 gearBtn.addEventListener("click", () => openSettings());
-tabbar.append(newTabBtn, tabScroller, gearBtn);
+/** Snor mouse indicator next to the settings gear: highlighted when loaded. */
+const snorBtn = document.createElement("button");
+snorBtn.className = "newtab snor-orb";
+snorBtn.title = "Snor local assistant (ctrl + shift + a)";
+snorBtn.setAttribute("aria-label", "Toggle Snor assistant");
+snorBtn.innerHTML =
+  '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">' +
+  '<circle cx="5.4" cy="4.6" r="2.1"/><circle cx="10.4" cy="4.9" r="1.7"/>' +
+  '<ellipse cx="8" cy="9.4" rx="4.4" ry="3.8"/>' +
+  '<path d="M12.2 11.1c1.5.5 2.1 1.5 1.8 2.6" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>' +
+  "</svg>";
+snorBtn.addEventListener("click", () => toggleSnor());
+snorBtn.dataset.state = "stopped";
+tabbar.append(newTabBtn, tabScroller, snorBtn, gearBtn);
 const termWrap = document.createElement("div");
 termWrap.className = "term-wrap";
 
@@ -1450,12 +1463,9 @@ function renderTerms(ws: Workspace | undefined): void {
 const stCwd = el("span", "", "");
 const stGit = el("span", "pill", "");
 const stClock = el("span", "clock", "");
-const snorBtn = el("button", "pill snor-toggle", "✦ Snor");
-snorBtn.title = "Snor local assistant (ctrl + shift + a)";
-snorBtn.addEventListener("click", () => toggleSnor());
 // Context on the left, clock on the far right.
-statusbar.append(stCwd, stGit, snorBtn, el("span", ""), stClock);
-(statusbar.children[3] as HTMLElement).style.marginLeft = "auto";
+statusbar.append(stCwd, stGit, el("span", ""), stClock);
+(statusbar.children[2] as HTMLElement).style.marginLeft = "auto";
 
 const gitCache = new Map<string, string>();
 
@@ -1831,8 +1841,9 @@ function renderSnor(): void {
 
   if (snorSendEl) snorSendEl.disabled = snorBusy() || !cfg.snor.modelPath;
   if (snorStopEl) snorStopEl.disabled = !snorBusy();
+  snorBtn.dataset.state = snorStatus.state;
   snorBtn.classList.toggle("busy", snorBusy());
-  snorBtn.title = `Snor: ${snorStateLabel(snorStatus.state)}`;
+  snorBtn.title = `Snor: ${snorStateLabel(snorStatus.state)} (ctrl + shift + a)`;
 }
 
 sidePanels.register({ id: "snor", title: "Snor", mount: mountSnor });

@@ -20,7 +20,7 @@ covers the architecture, a phased build, and the decisions still open.
   `/v1/chat/completions`, and kills the child on app exit.
 - The panel: `src-ui/src/main.ts` (mount) + `src-ui/src/snor.ts`
   (context building). It docks into `.main`, is resizable, and is
-  toggled with `ctrl+shift+a` or the statusbar button.
+  toggled with `ctrl+shift+a` or the mouse indicator next to settings.
 - Settings: model path, `llama-server` override, context size, GPU
   layers, and attached scrollback lines.
 - The slot: `SidePanelRegistry` (`src-ui/src/panels.ts`) with the docked
@@ -226,7 +226,7 @@ becomes fully agentic.
 
 The dock is wired: `panelSlot` sits inside `.main` after `center`, the
 panel is resizable (280-900 px, width persisted globally), and a
-statusbar button plus `ctrl+shift+a` toggle it. A registered panel owns
+mouse indicator next to the settings gear plus `ctrl+shift+a` toggle it. A registered panel owns
 its body through the `mount` callback on `SidePanelDef`.
 
 Layout:
@@ -540,7 +540,7 @@ The Phase 0 spike settles the v1 surface, backend, and distribution:
 - **Lifecycle:** one shared server per app, lazy start. The unload
   policy (close panel, idle timeout, or keep resident) is still open.
 - **Panel:** right dock, resizable (280-900 px), toggle shortcut and a
-  statusbar button. The dock now lives in the `.main` row.
+  mouse indicator next to settings. The dock lives in the `.main` row.
 - **Workspace context:** curated `ContextProvider` cards and
   deterministic slash commands in v1. Read-only tools come next; no
   free-form retrieval or model-chosen queries.

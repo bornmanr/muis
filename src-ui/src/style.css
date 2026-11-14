@@ -299,9 +299,14 @@ body{
 .sidepanel{width:380px; min-width:280px; flex:0 0 auto; position:relative}
 .sidepanel-grip{position:absolute; left:-3px; top:0; bottom:0; width:6px; cursor:col-resize; z-index:5}
 .sidepanel-grip:hover{background:rgba(61,174,233,.25)}
-.snor-toggle{font:inherit; cursor:pointer; color:var(--dim)}
-.snor-toggle:hover{color:var(--fg)}
-.snor-toggle.busy{color:var(--accent); border-color:var(--accent)}
+.newtab.snor-orb{color:var(--dim); opacity:.5}
+.newtab.snor-orb svg{display:block; fill:currentColor}
+.newtab.snor-orb:hover{opacity:1}
+.newtab.snor-orb[data-state="starting"]{color:var(--accent); opacity:.8; animation:snor-pulse 1.2s ease-in-out infinite}
+.newtab.snor-orb[data-state="ready"]{color:var(--accent); opacity:1}
+.newtab.snor-orb[data-state="streaming"]{color:var(--accent); opacity:1; filter:drop-shadow(0 0 4px var(--accent))}
+.newtab.snor-orb[data-state="error"]{color:var(--red); opacity:1}
+@keyframes snor-pulse{0%,100%{opacity:.4}50%{opacity:1}}
 .snor{display:flex; flex-direction:column; gap:8px; height:100%; font-size:12px; box-sizing:border-box}
 .snor-status{display:flex; align-items:center; gap:6px; flex-wrap:wrap; color:var(--dim)}
 .snor-dot{width:7px; height:7px; border-radius:50%; background:#6b7378}
