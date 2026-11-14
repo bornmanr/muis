@@ -560,6 +560,16 @@ mod tests {
     }
 
     #[test]
+    fn opencode_plugin_uses_the_v2_definition_shape() {
+        // opencode 2.x rejects V1 factory exports and only reports it in the
+        // server log, so the installed file must default-export a definition
+        // with an id and a setup function.
+        assert!(OPENCODE_PLUGIN_SRC.contains("export default"));
+        assert!(OPENCODE_PLUGIN_SRC.contains("id: \"muis\""));
+        assert!(OPENCODE_PLUGIN_SRC.contains("setup("));
+    }
+
+    #[test]
     fn tui_plugin_is_marked_and_installed_separately() {
         assert!(OPENCODE_TUI_FILE.ends_with(".mjs"));
         assert_ne!(OPENCODE_TUI_FILE, OPENCODE_PLUGIN_FILE);
