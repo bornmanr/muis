@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import plugin, {
   createMuisPlugin,
+  permissionOf,
   SESSION_EVENTS,
 } from "../../crates/muis-shell/opencode-plugin/muis.js";
 
@@ -33,7 +34,15 @@ test("default export is a V2 definition opencode can load", () => {
   // server log.
   assert.equal(plugin.id, "muis");
   assert.equal(typeof plugin.setup, "function");
-  assert.deepEqual(SESSION_EVENTS, ["session.created", "session.renamed", "session.idle"]);
+  assert.deepEqual(SESSION_EVENTS, [
+    "session.created",
+    "session.renamed",
+    "session.idle",
+    "session.execution.succeeded",
+    "session.execution.failed",
+    "form.created",
+    "permission.asked",
+  ]);
 });
 
 test("session.idle toast names the project and the work", () => {
@@ -44,6 +53,79 @@ test("session.idle toast names the project and the work", () => {
   assert.match(joined, /--title muis/);
   assert.match(joined, /--body Fix the clock has finished/);
   assert.doesNotMatch(joined, /turn finished/);
+});
+
+test("session.execution.succeeded replaces session.idle on opencode 2.3", () => {
+  const { plugin, calls } = harness();
+  plugin.event(created("ses_exec", { title: "Port the plugin", location: { directory: "/home/x/Projects/muis" } }));
+  plugin.event({ type: "session.execution.succeeded", data: { sessionID: "ses_exec" } });
+  assert.match(calls.join("\n"), /--title muis/);
+  assert.match(calls.join("\n"), /--body Port the plugin has finished/);
+});
+
+test("session.execution.failed does not claim the work finished", () => {
+  const { plugin, calls } = harness();
+  plugin.event(created("ses_fail", { title: "Broken turn" }));
+  plugin.event({ type: "session.execution.failed", data: { sessionID: "ses_fail" } });
+  const joined = calls.join("\n");
+  assert.match(joined, /--body Broken turn failed/);
+  assert.doesNotMatch(joined, /has finished/);
+});
+
+test("form.created alerts while the turn waits for an answer", () => {
+  const { plugin, calls } = harness();
+  plugin.event(created("ses_form", { title: "Pick a colour", location: { directory: "/home/x/Projects/muis" } }));
+  plugin.event({
+    type: "form.created",
+    data: {
+      form: {
+        id: "frm_1",
+        sessionID: "ses_form",
+        title: "Questions",
+        metadata: { kind: "question" },
+        fields: [{ key: "q0", type: "multiselect", title: "Pick one" }],
+      },
+    },
+  });
+  const joined = calls.join("\n");
+  assert.match(joined, /--title muis/);
+  assert.match(joined, /--body Pick a colour is waiting for your input: Questions/);
+});
+
+test("form.created for a global form falls back to the event location", () => {
+  const { plugin, calls } = harness();
+  plugin.event({
+    type: "form.created",
+    location: { directory: "/home/x/Projects/muis" },
+    data: {
+      form: {
+        id: "frm_global",
+        sessionID: "global",
+        title: "MCP authorization",
+        metadata: { kind: "mcp" },
+        fields: [],
+      },
+    },
+  });
+  const joined = calls.join("\n");
+  assert.match(joined, /--title muis/);
+  assert.match(joined, /--body opencode is waiting for your input: MCP authorization/);
+});
+
+test("permission.asked alerts with the V2 action name", () => {
+  const { plugin, calls } = harness();
+  plugin.event(created("ses_perm", { title: "Touch a file", location: { directory: "/home/x/Projects/muis" } }));
+  plugin.event({
+    type: "permission.asked",
+    data: { id: "per_1", sessionID: "ses_perm", action: "bash", resources: ["*"] },
+  });
+  assert.match(calls.join("\n"), /--body Touch a file needs permission: bash/);
+});
+
+test("permission.asked also reads the legacy permission field", () => {
+  assert.equal(permissionOf({ permission: "  edit " }), "edit");
+  assert.equal(permissionOf({ action: "bash" }), "bash");
+  assert.equal(permissionOf({}), "");
 });
 
 test("session.renamed updates the title used by the toast", () => {
@@ -99,6 +181,13 @@ test("session.idle notifies without overriding the TUI route", () => {
   assert.match(joined, /notify --title p/);
 });
 
+test("ask events with no session id are ignored", () => {
+  const { plugin, calls } = harness();
+  plugin.event({ type: "form.created", data: { form: { title: "No session" } } });
+  plugin.event({ type: "permission.asked", data: { action: "bash" } });
+  assert.deepEqual(calls, []);
+});
+
 test("invalid session ids are never reported", () => {
   const { plugin, calls } = harness();
   plugin.prompt("not-a-session");
@@ -108,6 +197,7 @@ test("invalid session ids are never reported", () => {
 test("unrelated events are ignored", () => {
   const { plugin, calls } = harness();
   plugin.event({ type: "session.status", data: { sessionID: "ses_status" } });
+  plugin.event({ type: "session.execution.started", data: { sessionID: "ses_exec" } });
   plugin.event(undefined);
   assert.deepEqual(calls, []);
 });
