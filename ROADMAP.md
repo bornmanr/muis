@@ -53,6 +53,8 @@ Legend: `[x]` settled+locked · `[~]` decided, needs test · `[ ]` open.
       explicit terminal context, and settings for model/server paths
 - [x] Snor conversations persist per workspace (`snor.json`); attached
       terminal context is never written to disk
+- [x] Snor read-only workspace lookups (`/git`, `/docs`, `/file`) are
+      workspace-scoped; no model-chosen paths and no writes
 
 ## To build (in suggested order)
 

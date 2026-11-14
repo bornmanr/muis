@@ -5,6 +5,7 @@ import {
   buildSnorContext,
   scrubSecrets,
   parseSnorHistory,
+  parseSnorSlash,
   serializeSnorHistory,
   snorModelName,
   snorPrompt,
@@ -55,6 +56,28 @@ describe("snor context", () => {
     expect(tailLines([], 5)).toEqual([]);
     expect(tailLines(["a"], -1)).toEqual([]);
     expect(tailLines(["a", "b"], 10)).toEqual(["a", "b"]);
+  });
+});
+
+describe("snor slash commands", () => {
+  it("recognizes the read-only commands and their optional argument", () => {
+    expect(parseSnorSlash("/git")).toEqual({ command: "git", arg: "" });
+    expect(parseSnorSlash("  /GIT  ")).toEqual({ command: "git", arg: "" });
+    expect(parseSnorSlash("/git summarize the diff")).toEqual({
+      command: "git",
+      arg: "summarize the diff",
+    });
+    expect(parseSnorSlash("/docs")).toEqual({ command: "docs", arg: "" });
+    expect(parseSnorSlash("/file docs/plan.md")).toEqual({
+      command: "file",
+      arg: "docs/plan.md",
+    });
+  });
+
+  it("leaves prompts and unknown commands alone", () => {
+    expect(parseSnorSlash("what changed?")).toBeNull();
+    expect(parseSnorSlash("/rm -rf /")).toBeNull();
+    expect(parseSnorSlash("")).toBeNull();
   });
 });
 

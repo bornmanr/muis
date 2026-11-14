@@ -14,7 +14,7 @@ import { QueryHistory } from "./history";
 import { WorkerClient, type Transport } from "./worker";
 import { SearchController } from "./search";
 import { SidePanelRegistry } from "./panels";
-import { buildSnorContext, parseSnorHistory, serializeSnorHistory, snorModelName, snorPrompt, snorStateLabel, type SnorTurn } from "./snor";
+import { buildSnorContext, parseSnorHistory, parseSnorSlash, scrubSecrets, serializeSnorHistory, snorModelName, snorPrompt, snorStateLabel, type SnorTurn } from "./snor";
 import { newActivityState, isTabBusy, anyTabBusy, forgetTab } from "./activity";
 import { OscParser, type NotifyEvent } from "./osc";
 import { CommandTracker, tabLabel as tabLabelOf } from "./commandbar";
@@ -1699,16 +1699,74 @@ function currentSnorContext(): { chips: string[]; text: string } {
   });
 }
 
-async function snorSend(): Promise<void> {
-  const text = snorInputEl?.value.trim() ?? "";
+interface SnorRead {
+  prompt: string;
+  context: string;
+  source: string;
+}
+
+/**
+ * Resolve the explicit read-only slash commands into prompt + context.
+ * Unknown text passes through; nothing here writes or runs commands the
+ * model chose. `/file` and `/docs` stay inside the workspace.
+ */
+async function resolveSnorRead(text: string): Promise<SnorRead> {
+  const plain: SnorRead = { prompt: text, context: "", source: "" };
+  const slash = parseSnorSlash(text);
+  if (!slash || !IN_TAURI) return plain;
+  const cwd = store.currentWorkspace()?.dir;
+  if (!cwd) throw new Error("no workspace directory to read from");
+  const mask = (value: string): string =>
+    cfg.snor.scrubSecrets ? scrubSecrets(value) : value;
+  if (slash.command === "git") {
+    const status = await invoke<string>("snor_git_status", { cwd });
+    return {
+      prompt: slash.arg || "Summarize the current repository state.",
+      context: mask(`Repository status:\n${status}`),
+      source: "git status",
+    };
+  }
+  if (slash.command === "docs") {
+    const docs = await invoke<string[]>("snor_list_docs", { cwd });
+    const list = docs.length > 0 ? docs.join("\n") : "(no documentation files found)";
+    return {
+      prompt: slash.arg || "Which docs exist and which look relevant?",
+      context: mask(`Documentation files:\n${list}`),
+      source: `${docs.length} docs`,
+    };
+  }
+  if (!slash.arg) throw new Error("usage: /file <path>");
+  const content = await invoke<string>("snor_read_doc", { cwd, path: slash.arg });
+  return {
+    prompt: "Explain this file.",
+    context: mask(`File ${slash.arg}:\n${content}`),
+    source: `file: ${slash.arg}`,
+  };
+}
+
+async function snorSend(): Promise<void> {  const text = snorInputEl?.value.trim() ?? "";
   if (!text || snorBusy()) return;
   if (!cfg.snor.modelPath) {
     renderSnor();
     return;
   }
-  const context = currentSnorContext();
+  let read: SnorRead;
+  try {
+    read = await resolveSnorRead(text);
+  } catch (err) {
+    snorFailed(err);
+    return;
+  }
+  const terminal = currentSnorContext();
+  const context = [terminal.text, read.context].filter(Boolean).join("\n\n");
+  const source = read.source || (terminal.text ? "terminal" : "");
   const conversation = snorConversation();
-  conversation.push({ role: "user", text, context: context.text || undefined });
+  conversation.push({
+    role: "user",
+    text: read.prompt,
+    context: context || undefined,
+    source: source || undefined,
+  });
   conversation.push({ role: "assistant", text: "" });
   snorActive = conversation;
   if (snorInputEl) snorInputEl.value = "";
@@ -1788,7 +1846,7 @@ function mountSnor(body: HTMLElement): void {
 
   snorInputEl = document.createElement("textarea");
   snorInputEl.className = "snor-input";
-  snorInputEl.placeholder = "Ask about this terminal…";
+  snorInputEl.placeholder = "Ask about this terminal… (/git, /docs, /file <path>)";
   snorInputEl.rows = 3;
   snorInputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1813,7 +1871,7 @@ function mountSnor(body: HTMLElement): void {
   preview.style.display = "none";
   snorPreviewEl = preview;
   snorPreviewBtn = el("button", "snor-chip", "show payload") as HTMLButtonElement;
-  snorPreviewBtn.addEventListener("click", () => {
+  snorPreviewBtn.addEventListener("click", async () => {
     if (!snorPreviewEl || !snorPreviewBtn) return;
     const showing = snorPreviewEl.style.display !== "none";
     if (showing) {
@@ -1821,8 +1879,15 @@ function mountSnor(body: HTMLElement): void {
       snorPreviewBtn.textContent = "show payload";
       return;
     }
-    snorPreviewEl.textContent =
-      currentSnorContext().text || "(no terminal context attached)";
+    snorPreviewBtn.textContent = "loading…";
+    const parts = [currentSnorContext().text];
+    try {
+      const read = await resolveSnorRead(snorInputEl?.value.trim() ?? "");
+      if (read.context) parts.push(read.context);
+    } catch {
+      /* preview is best effort */
+    }
+    snorPreviewEl.textContent = parts.filter(Boolean).join("\n\n") || "(no context attached)";
     snorPreviewEl.style.display = "block";
     snorPreviewBtn.textContent = "hide payload";
   });
@@ -1873,7 +1938,9 @@ function renderSnor(): void {
     const text = el("div", "snor-text", turn.text);
     row.append(text);
     if (turn.context) {
-      row.append(el("div", "snor-msg-context", "terminal context attached (not saved)"));
+      row.append(
+        el("div", "snor-msg-context", `${turn.source ?? "terminal"} context attached (not saved)`),
+      );
     }
     snorLogEl.append(row);
     if (turn.role === "assistant" && turn === conversation[conversation.length - 1]) {

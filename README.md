@@ -72,7 +72,9 @@ cargo run -p muis-shell
   gear, highlighted while the engine is loaded) opens the Snor panel.
   Choose a GGUF model in settings; it needs `llama-server` (Arch:
   `llama-cpp`). The model runs as a supervised loopback process and text
-  never leaves the machine. See `docs/snor-plan.md`.
+  never leaves the machine. Explicit read-only lookups: `/git`,
+  `/docs`, and `/file <path>` (workspace-scoped). See
+  `docs/snor-plan.md`.
 
 ## Tests
 
