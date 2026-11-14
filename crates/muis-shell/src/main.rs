@@ -491,19 +491,28 @@ fn snor_server_available(server_path: Option<String>) -> bool {
 }
 
 #[tauri::command]
-fn snor_start(
+async fn snor_start(
     engine: tauri::State<'_, Arc<SnorEngine>>,
     model_path: String,
     ctx_size: u32,
     gpu_layers: i32,
     server_path: Option<String>,
 ) -> Result<SnorStatus, String> {
-    engine.start(&model_path, ctx_size, gpu_layers, server_path.as_deref())
+    // Model load can take seconds; keep the webview thread free.
+    let engine = Arc::clone(&engine);
+    tauri::async_runtime::spawn_blocking(move || {
+        engine.start(&model_path, ctx_size, gpu_layers, server_path.as_deref())
+    })
+    .await
+    .map_err(|e| format!("snor start task failed: {e}"))?
 }
 
 #[tauri::command]
-fn snor_stop(engine: tauri::State<'_, Arc<SnorEngine>>) {
-    engine.stop();
+async fn snor_stop(engine: tauri::State<'_, Arc<SnorEngine>>) -> Result<(), String> {
+    let engine = Arc::clone(&engine);
+    tauri::async_runtime::spawn_blocking(move || engine.stop())
+        .await
+        .map_err(|e| format!("snor stop task failed: {e}"))
 }
 
 #[tauri::command]
