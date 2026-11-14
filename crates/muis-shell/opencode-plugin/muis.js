@@ -1,7 +1,8 @@
-// muis-plugin v6
-// muis opencode server plugin: notify muis when a turn finishes so the tab
-// gets the done badge + toast, and report the exact session id as a fallback
-// when the TUI plugin is unavailable.
+// muis-plugin v7
+// muis opencode server plugin: notify muis when a turn finishes or when
+// opencode pauses for input, so the tab gets the done badge + toast, and
+// report the exact session id as a fallback when the TUI plugin is
+// unavailable.
 //
 // Installed by muis at ~/.config/opencode/plugins/muis.js. opencode 2.x only
 // loads a plugin from that directory when the module default-exports a
@@ -10,6 +11,12 @@
 // There is no Bun `$` in the V2 plugin context, so helpers are spawned
 // directly; nothing waits on them.
 //
+// opencode 2.3 removed the `session.idle` event from normal turns: a turn
+// now ends with `session.execution.succeeded|failed|interrupted`. A question
+// or permission request pauses the turn without ending it, so it never
+// produces a completion event at all; `form.created` and `permission.asked`
+// are the only signals that the tab is waiting for the user.
+//
 // It calls the `muis-notify` and `muis-agent` binaries, which muis ships and
 // routes back to the tab via MUIS_TAB_ID (injected into every pty). No-op
 // when muis is not running. The "muis-plugin" marker lets muis safely update
@@ -17,8 +24,16 @@
 
 import { spawn } from "node:child_process";
 
-/** Session events this plugin keeps state for. */
-export const SESSION_EVENTS = ["session.created", "session.renamed", "session.idle"];
+/** Events this plugin keeps state for or turns into notifications. */
+export const SESSION_EVENTS = [
+  "session.created",
+  "session.renamed",
+  "session.idle",
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "form.created",
+  "permission.asked",
+];
 
 /** Fire one helper and never block opencode. */
 function send(command, args) {
@@ -44,14 +59,27 @@ function notify(args) {
   send("muis-notify", args);
 }
 
+/** Project name from a directory, for the notification title. */
+function projectOf(directory) {
+  return typeof directory === "string" && directory
+    ? directory.replace(/\/+$/, "").split("/").pop()
+    : "";
+}
+
+/** The permission or action name carried by a `permission.asked` event. */
+export function permissionOf(data) {
+  const raw = data?.permission ?? data?.action;
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
 /**
  * Session bookkeeping and the helper calls it triggers. Both helpers are
  * injected so the behavior is testable outside opencode.
  */
 export function createMuisPlugin({ reportAgent, notify }) {
   // Session id -> { title, directory, parentID }, learned from
-  // session.created/renamed (session.idle itself only carries the id), so
-  // the notification can name the project and the session.
+  // session.created/renamed (turn events only carry the id), so the
+  // notification can name the project and the session.
   const sessions = new Map();
   let lastSession = "";
 
@@ -67,12 +95,44 @@ export function createMuisPlugin({ reportAgent, notify }) {
     reportAgent(args);
   };
 
+  /** Where (project/tab) and what (session title) a notification is about. */
+  const describe = (id, event) => {
+    const s = sessions.get(id) ?? {};
+    const project = projectOf(s.directory || event?.location?.directory);
+    return {
+      title: project || "opencode",
+      summary: typeof s.title === "string" ? s.title.trim() : "",
+    };
+  };
+
   return {
-    /** One `session.*` event from the opencode event stream. */
+    /** One event from the opencode event stream. */
     event(event) {
       const type = event?.type;
       if (!SESSION_EVENTS.includes(type)) return;
       const data = event.data ?? {};
+
+      if (type === "permission.asked") {
+        const id = data.sessionID;
+        if (typeof id !== "string") return;
+        const where = describe(id, event);
+        const what = permissionOf(data);
+        const body = `${where.summary || "opencode"} needs permission`;
+        notify(["--title", where.title, "--body", what ? `${body}: ${what}` : body]);
+        return;
+      }
+
+      if (type === "form.created") {
+        const form = data.form ?? {};
+        const id = form.sessionID;
+        if (typeof id !== "string") return;
+        const where = describe(id, event);
+        const what = typeof form.title === "string" ? form.title.trim() : "";
+        const body = `${where.summary || "opencode"} is waiting for your input`;
+        notify(["--title", where.title, "--body", what ? `${body}: ${what}` : body]);
+        return;
+      }
+
       const id = data.sessionID;
       if (typeof id !== "string") return;
 
@@ -93,15 +153,17 @@ export function createMuisPlugin({ reportAgent, notify }) {
         return;
       }
 
-      // session.idle: a turn ended. Identify where (project/tab) in the title
-      // and what (the session title) in the body, instead of a constant text.
-      const s = sessions.get(id) ?? {};
-      const dir = typeof s.directory === "string" ? s.directory : "";
-      const project = dir ? dir.replace(/\/+$/, "").split("/").pop() : "";
-      const title = project || "opencode";
-      const summary = typeof s.title === "string" ? s.title.trim() : "";
-      const body = summary ? `${summary} has finished` : "opencode has finished";
-      notify(["--title", title, "--body", body]);
+      // A turn ended. opencode 2.3 reports execution events; older builds
+      // still send session.idle. A failed turn gets its own wording so the
+      // notification does not claim work succeeded.
+      const where = describe(id, event);
+      const failed = type === "session.execution.failed";
+      const body = failed
+        ? `${where.summary || "opencode"} failed`
+        : where.summary
+          ? `${where.summary} has finished`
+          : "opencode has finished";
+      notify(["--title", where.title, "--body", body]);
     },
 
     /** Prompt admission hook: report the session about to receive a turn. */
