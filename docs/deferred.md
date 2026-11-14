@@ -9,9 +9,6 @@ solid and the project is otherwise quiet.
   (`SidePanelRegistry`: register/toggle/single-visible/unregister, see
   `docs/archive/build-progress.md` Step 6). No panel code exists yet.
   Plan: `docs/snor-plan.md`. Revisit once the terminal is done.
-- **neofetch/fastfetch branding.** Add a fastfetch preset/logo for
-  muis/Veldmuis. muis already exports `TERM_PROGRAM=muis` for spawned
-  shells (`crates/muis-worker/src/main.rs`).
 
 ## Removed build paths
 
