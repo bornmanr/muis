@@ -1,0 +1,46 @@
+// muis fastfetch preset.
+//
+// Usage: fastfetch --config muis
+// after this file is in a fastfetch preset directory, e.g.
+// /usr/share/fastfetch/presets/muis.jsonc or
+// ~/.local/share/fastfetch/presets/muis.jsonc.
+//
+// The logo is inline, so the preset is a single file and needs no path
+// juggling. Colors follow the Breeze accent used by muis chrome.
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "type": "data",
+    "source": "$1\n        __   _\n    .-.'  `; `-._  __  _\n   (_,         .-:'  `; `-._\n ,'o\"(        (_,           )\n(__,-'      ,'o\"(            )>\n   (       (__,-'            )\n    `-'._.--._(             )\n       |||  |||`-'._.--._.-'\n                  |||  |||",
+    "padding": {
+      "top": 1,
+      "left": 2,
+      "right": 4
+    },
+    "color": {
+      "1": "light_cyan"
+    }
+  },
+  "display": {
+    "separator": "  ",
+    "key": {
+      "width": 12
+    }
+  },
+  "modules": [
+    "title",
+    "separator",
+    "os",
+    "kernel",
+    "uptime",
+    "packages",
+    "shell",
+    "terminal",
+    "wm",
+    "cpu",
+    "gpu",
+    "memory",
+    "separator",
+    "colors"
+  ]
+}

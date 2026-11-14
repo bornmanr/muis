@@ -108,3 +108,19 @@ bash:
 muis_osc7() { printf '\e]7;file://%s%s\e\\' "$HOSTNAME" "$PWD"; }
 PROMPT_COMMAND="muis_osc7${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
 ```
+
+## Fastfetch preset
+
+`data/fastfetch/muis.jsonc` is a self-contained fastfetch preset with an
+inline muis logo in the Breeze accent color. Install it into a preset
+search path and run it by name:
+
+```sh
+mkdir -p ~/.local/share/fastfetch/presets
+cp fastfetch/muis.jsonc ~/.local/share/fastfetch/presets/
+fastfetch --config muis
+```
+
+The release tarball carries it under `fastfetch/`. A system-wide install
+(`/usr/share/fastfetch/presets/muis.jsonc`) is up to the packager.
+

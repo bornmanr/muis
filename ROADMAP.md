@@ -69,4 +69,3 @@ Legend: `[x]` settled+locked · `[~]` decided, needs test · `[ ]` open.
 Parked until the terminal itself is polished. See `docs/deferred.md`:
 
 - Snor engine (slot API is ready)
-- neofetch/fastfetch branding
