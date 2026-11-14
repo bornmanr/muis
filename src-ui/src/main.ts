@@ -1605,6 +1605,8 @@ let snorInputEl: HTMLTextAreaElement | null = null;
 let snorSendEl: HTMLButtonElement | null = null;
 let snorStopEl: HTMLButtonElement | null = null;
 let snorLiveEl: HTMLElement | null = null;
+let snorPreviewEl: HTMLElement | null = null;
+let snorPreviewBtn: HTMLButtonElement | null = null;
 
 function snorConversation(): SnorTurn[] {
   const id = store.currentWorkspace()?.id ?? "none";
@@ -1646,8 +1648,7 @@ async function refreshSnorStatus(): Promise<void> {
   }
 }
 
-function snorScrollback(): string[] {
-  const ws = store.currentWorkspace();
+function snorScrollback(): string[] {  const ws = store.currentWorkspace();
   const tab = ws?.tabs[ws.active];
   const view = tab ? views.get(tab.id) : undefined;
   if (!view) return [];
@@ -1661,6 +1662,19 @@ function snorScrollback(): string[] {
   return lines;
 }
 
+/** The exact context block the next prompt would send. */
+function currentSnorContext(): { chips: string[]; text: string } {
+  const ws = store.currentWorkspace();
+  const tab = ws?.tabs[ws.active];
+  return buildSnorContext({
+    tabTitle: tab?.title,
+    cwd: tab?.cwd,
+    scrollback: cfg.snor.contextLines > 0 ? snorScrollback() : [],
+    maxLines: cfg.snor.contextLines,
+    scrub: cfg.snor.scrubSecrets,
+  });
+}
+
 async function snorSend(): Promise<void> {
   const text = snorInputEl?.value.trim() ?? "";
   if (!text || snorBusy()) return;
@@ -1668,14 +1682,7 @@ async function snorSend(): Promise<void> {
     renderSnor();
     return;
   }
-  const ws = store.currentWorkspace();
-  const tab = ws?.tabs[ws.active];
-  const context = buildSnorContext({
-    tabTitle: tab?.title,
-    cwd: tab?.cwd,
-    scrollback: snorScrollback(),
-    maxLines: cfg.snor.contextLines,
-  });
+  const context = currentSnorContext();
   const conversation = snorConversation();
   conversation.push({ role: "user", text: snorPrompt(text, context.text) });
   conversation.push({ role: "assistant", text: "" });
@@ -1773,7 +1780,28 @@ function mountSnor(body: HTMLElement): void {
   const actions = el("div", "snor-actions");
   actions.append(snorSendEl, snorStopEl, clear);
 
-  body.append(snorStatusEl, snorConfigEl, snorLogEl, snorChipsEl, snorInputEl, actions);
+  const preview = document.createElement("pre");
+  preview.className = "snor-payload";
+  preview.style.display = "none";
+  snorPreviewEl = preview;
+  snorPreviewBtn = el("button", "snor-chip", "show payload") as HTMLButtonElement;
+  snorPreviewBtn.addEventListener("click", () => {
+    if (!snorPreviewEl || !snorPreviewBtn) return;
+    const showing = snorPreviewEl.style.display !== "none";
+    if (showing) {
+      snorPreviewEl.style.display = "none";
+      snorPreviewBtn.textContent = "show payload";
+      return;
+    }
+    snorPreviewEl.textContent =
+      currentSnorContext().text || "(no terminal context attached)";
+    snorPreviewEl.style.display = "block";
+    snorPreviewBtn.textContent = "hide payload";
+  });
+  const payload = el("div", "snor-payload-box");
+  payload.append(snorPreviewBtn, preview);
+
+  body.append(snorStatusEl, snorConfigEl, snorLogEl, snorChipsEl, payload, snorInputEl, actions);
   renderSnor();
   void refreshSnorStatus();
 }
@@ -2117,6 +2145,9 @@ optSnorLines.min = "0";
 optSnorLines.max = "5000";
 optSnorLines.step = "50";
 optSnorLines.title = "Trailing scrollback lines attached to each prompt";
+const optSnorScrub = document.createElement("input");
+optSnorScrub.type = "checkbox";
+optSnorScrub.title = "Mask likely secrets in attached context";
 const SEGMENTS: [string, string][] = [
   ["cwd", "cwd"],
   ["git", "git"],
@@ -2166,6 +2197,7 @@ settingsBody.append(
     settingsRow("Context size", optSnorContext),
     settingsRow("GPU layers", optSnorGpu),
     settingsRow("Scrollback lines", optSnorLines),
+    settingsRow("Mask secrets", optSnorScrub),
   ]),
 );
 settingsOverlay.append(settingsBox);
@@ -2185,6 +2217,7 @@ function openSettings(): void {
   optSnorContext.value = cfg.snor.contextSize.toString();
   optSnorGpu.value = cfg.snor.gpuLayers.toString();
   optSnorLines.value = cfg.snor.contextLines.toString();
+  optSnorScrub.checked = cfg.snor.scrubSecrets;
   for (const [id, cb] of Object.entries(segOpts)) {
     cb.checked = segmentVisible(cfg.statusbar, id);
   }
@@ -2220,6 +2253,7 @@ async function applySettings(): Promise<void> {
       contextSize: clampSnorContext(Number(optSnorContext.value)),
       gpuLayers: Math.max(0, Math.floor(Number(optSnorGpu.value)) || 0),
       contextLines: Math.max(0, Math.floor(Number(optSnorLines.value)) || 0),
+      scrubSecrets: optSnorScrub.checked,
       panelWidth: clampSnorPanelWidth(cfg.snor.panelWidth),
     },
   };

@@ -39,6 +39,8 @@ export interface SnorConfig {
   temperature: number;
   /** Scrollback lines offered as context; 0 disables scrollback. */
   contextLines: number;
+  /** Mask likely secrets in attached context before sending/showing it. */
+  scrubSecrets: boolean;
   /** System prompt sent before the conversation. */
   systemPrompt: string;
   /** Docked panel width in pixels. */
@@ -56,6 +58,7 @@ export function defaultSnorConfig(): SnorConfig {
     gpuLayers: 99,
     temperature: 0.2,
     contextLines: 0,
+    scrubSecrets: false,
     systemPrompt: SNOR_DEFAULT_SYSTEM_PROMPT,
     panelWidth: 380,
   };
@@ -94,6 +97,8 @@ export function snorConfigFromJSON(raw: unknown): SnorConfig {
       typeof r.contextLines === "number"
         ? Math.min(5000, Math.max(0, Math.floor(r.contextLines)))
         : base.contextLines,
+    scrubSecrets:
+      typeof r.scrubSecrets === "boolean" ? r.scrubSecrets : base.scrubSecrets,
     systemPrompt: typeof r.systemPrompt === "string" ? r.systemPrompt : base.systemPrompt,
     panelWidth:
       typeof r.panelWidth === "number"

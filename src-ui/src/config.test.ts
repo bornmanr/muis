@@ -24,6 +24,7 @@ describe("AppConfig", () => {
         gpuLayers: 99,
         temperature: 0.2,
         contextLines: 0,
+        scrubSecrets: false,
         systemPrompt:
           "Answer only from the supplied context. If it is not there, say you do not know.",
         panelWidth: 380,
@@ -134,6 +135,7 @@ describe("AppConfig", () => {
         gpuLayers: 32,
         temperature: 0.7,
         contextLines: 200,
+        scrubSecrets: true,
         systemPrompt: "stay short",
         panelWidth: 420,
       },

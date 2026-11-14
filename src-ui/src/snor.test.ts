@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   SNOR_MAX_CONTEXT_CHARS,
   buildSnorContext,
+  scrubSecrets,
   snorModelName,
   snorPrompt,
   snorStateLabel,
@@ -50,6 +51,35 @@ describe("snor context", () => {
     expect(tailLines([], 5)).toEqual([]);
     expect(tailLines(["a"], -1)).toEqual([]);
     expect(tailLines(["a", "b"], 10)).toEqual(["a", "b"]);
+  });
+});
+
+describe("snor secrets", () => {
+  it("masks known token shapes and credential lines", () => {
+    const text = [
+      "key AKIAABCDEFGHIJKLMNOP here",
+      "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+      "api_key=supersecretvalue",
+      "https://user:hunter2@example.com/path",
+      "safe: value",
+    ].join("\n");
+    const out = scrubSecrets(text);
+    expect(out).not.toContain("AKIAABCDEFGHIJKLMNOP");
+    expect(out).not.toContain("abcdefghijklmnopqrstuvwxyz");
+    expect(out).not.toContain("supersecretvalue");
+    expect(out).not.toContain("hunter2");
+    expect(out).toContain("safe: value");
+    expect(out).toContain("[redacted]");
+  });
+
+  it("applies scrubbing to attached context only when enabled", () => {
+    const input = {
+      cwd: "/repo",
+      scrollback: ["password = hunter2"],
+      maxLines: 5,
+    };
+    expect(buildSnorContext(input).text).toContain("hunter2");
+    expect(buildSnorContext({ ...input, scrub: true }).text).not.toContain("hunter2");
   });
 });
 

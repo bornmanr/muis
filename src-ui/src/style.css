@@ -332,3 +332,5 @@ button.snor-chip:hover{border-color:var(--accent); color:var(--accent)}
 .snor-actions .btn{padding:5px 10px; flex:0 0 auto}
 .settings-inline{display:flex; gap:6px; align-items:center; flex:1}
 .settings-inline input{flex:1}
+.snor-payload-box{display:flex; flex-direction:column; gap:4px; align-items:flex-start}
+.snor-payload{width:100%; max-height:180px; overflow:auto; box-sizing:border-box; background:#232629; border:1px solid var(--border-dark); border-radius:4px; padding:6px; margin:0; font:11px var(--mono,monospace); white-space:pre-wrap; color:var(--dim)}

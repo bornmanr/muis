@@ -13,6 +13,8 @@ export interface SnorContextInput {
   scrollback?: string[];
   /** How many trailing scrollback lines to attach; 0 disables them. */
   maxLines: number;
+  /** Mask likely secrets before the text is shown or sent. */
+  scrub?: boolean;
 }
 
 export interface SnorContext {
@@ -49,10 +51,31 @@ export function buildSnorContext(input: SnorContextInput): SnorContext {
   }
   if (parts.length === 0) return { chips, text: "" };
   let text = "Terminal context:\n" + parts.join("\n");
+  if (input.scrub) text = scrubSecrets(text);
   if (text.length > SNOR_MAX_CONTEXT_CHARS) {
     text = text.slice(text.length - SNOR_MAX_CONTEXT_CHARS);
   }
   return { chips, text };
+}
+
+/**
+ * Mask likely secrets in terminal text. Best effort, deliberately
+ * conservative: known token shapes and `key = value` credential lines,
+ * plus userinfo in URLs and PEM private-key blocks. Users still see the
+ * exact payload before sending.
+ */
+export function scrubSecrets(text: string): string {
+  return text
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[redacted private key]")
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[redacted aws key]")
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[redacted github token]")
+    .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, "[redacted api key]")
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._~+/-]{12,}=*/gi, "$1 [redacted]")
+    .replace(
+      /\b((?:api[_-]?key|token|secret|password|passwd|pwd)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s"']{6,})/gi,
+      "$1[redacted]",
+    )
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+):[^\s/@]+@/gi, "$1:[redacted]@");
 }
 
 /** Compose the user message: their prompt plus the attached context. */
