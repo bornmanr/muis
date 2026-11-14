@@ -7,10 +7,9 @@ solid and the project is otherwise quiet.
 
 - **Snor follow-ups.** The panel, supervisor, and streaming path are
   implemented (`crates/muis-shell/src/snor.rs`, `src-ui/src/snor.ts`,
-  plan: `docs/snor-plan.md`). Explicit read-only lookups (`/git`,
-  `/docs`, `/file`) are implemented. Still open: explicit model
-  downloads with checksum verification, model-chosen tools, and the
-  unload/idle policy. Conversations persist per workspace in
+  plan: `docs/snor-plan.md`). Read-only lookups (`/git`, `/docs`,
+  `/file`) and the verified model catalog are implemented. Still open:
+  model-chosen tools and the unload/idle policy. Conversations persist per workspace in
   `snor.json` without the attached terminal context.
 - **neofetch/fastfetch branding.** Add a fastfetch preset/logo for
   muis/Veldmuis. muis already exports `TERM_PROGRAM=muis` for spawned
