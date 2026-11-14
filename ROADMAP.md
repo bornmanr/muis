@@ -47,6 +47,10 @@ Legend: `[x]` settled+locked · `[~]` decided, needs test · `[ ]` open.
 - [x] NVIDIA workarounds: `WEBKIT_DISABLE_DMABUF_RENDERER=1` at startup
       unless overridden (unit-tested), and xterm uses the WebGL renderer
       with automatic fallback to canvas
+- [x] Snor assistant slice: side panel docked into `.main`, resizable
+      per workspace width, supervised `llama-server` child (lazy start,
+      loopback + per-launch key, `/health`), streamed chat with stop,
+      explicit terminal context, and settings for model/server paths
 
 ## To build (in suggested order)
 
@@ -68,5 +72,6 @@ Legend: `[x]` settled+locked · `[~]` decided, needs test · `[ ]` open.
 
 Parked until the terminal itself is polished. See `docs/deferred.md`:
 
-- Snor engine (slot API is ready)
+- Snor follow-ups (plan: `docs/snor-plan.md`): model downloads,
+  conversation persistence, tools
 - neofetch/fastfetch branding

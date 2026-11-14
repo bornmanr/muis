@@ -23,6 +23,83 @@ export interface AppConfig {
   statusbar: Record<string, boolean>;
   /** Accent theme per workspace name (falls back to `theme`). */
   workspaceThemes: Record<string, string>;
+  /** Local assistant (Snor) settings; the engine is optional. */
+  snor: SnorConfig;
+}
+
+export interface SnorConfig {
+  /** Path to a user-supplied GGUF model; null means unconfigured. */
+  modelPath: string | null;
+  /** Optional override for the `llama-server` binary. */
+  serverPath: string | null;
+  /** Context window per slot. */
+  contextSize: number;
+  /** GPU layers to offload; 0 keeps inference on the CPU. */
+  gpuLayers: number;
+  temperature: number;
+  /** Scrollback lines offered as context; 0 disables scrollback. */
+  contextLines: number;
+  /** System prompt sent before the conversation. */
+  systemPrompt: string;
+  /** Docked panel width in pixels. */
+  panelWidth: number;
+}
+
+export const SNOR_DEFAULT_SYSTEM_PROMPT =
+  "Answer only from the supplied context. If it is not there, say you do not know.";
+
+export function defaultSnorConfig(): SnorConfig {
+  return {
+    modelPath: null,
+    serverPath: null,
+    contextSize: 8192,
+    gpuLayers: 99,
+    temperature: 0.2,
+    contextLines: 0,
+    systemPrompt: SNOR_DEFAULT_SYSTEM_PROMPT,
+    panelWidth: 380,
+  };
+}
+
+/** Clamp the Snor context window into a sane range. */
+export function clampSnorContext(value: number): number {
+  if (!Number.isFinite(value)) return defaultSnorConfig().contextSize;
+  return Math.min(131072, Math.max(512, Math.floor(value)));
+}
+
+/** Clamp the docked panel width. */
+export function clampSnorPanelWidth(value: number): number {
+  if (!Number.isFinite(value)) return defaultSnorConfig().panelWidth;
+  return Math.min(900, Math.max(280, Math.floor(value)));
+}
+
+export function snorConfigFromJSON(raw: unknown): SnorConfig {
+  const base = defaultSnorConfig();
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return base;
+  const r = raw as Record<string, unknown>;
+  const text = (v: unknown, fallback: string | null): string | null =>
+    typeof v === "string" && v.trim() ? v.trim() : fallback;
+  return {
+    modelPath: text(r.modelPath, base.modelPath),
+    serverPath: text(r.serverPath, base.serverPath),
+    contextSize:
+      typeof r.contextSize === "number" ? clampSnorContext(r.contextSize) : base.contextSize,
+    gpuLayers:
+      typeof r.gpuLayers === "number" ? Math.min(999, Math.max(0, Math.floor(r.gpuLayers))) : base.gpuLayers,
+    temperature:
+      typeof r.temperature === "number" && r.temperature >= 0 && r.temperature <= 2
+        ? r.temperature
+        : base.temperature,
+    contextLines:
+      typeof r.contextLines === "number"
+        ? Math.min(5000, Math.max(0, Math.floor(r.contextLines)))
+        : base.contextLines,
+    systemPrompt: typeof r.systemPrompt === "string" ? r.systemPrompt : base.systemPrompt,
+    panelWidth:
+      typeof r.panelWidth === "number"
+        ? clampSnorPanelWidth(r.panelWidth)
+        : base.panelWidth,
+  };
 }
 
 /** Accent theme for a workspace: its own, else the global default. */
@@ -60,6 +137,7 @@ export function defaultConfig(): AppConfig {
     bell: "none",
     statusbar: {},
     workspaceThemes: {},
+    snor: defaultSnorConfig(),
   };
 }
 
@@ -136,6 +214,7 @@ export function configFromJSON(json: string): AppConfig {
         : base.bell,
     statusbar: parseBoolMap(r.statusbar, base.statusbar),
     workspaceThemes: parseStringMap(r.workspaceThemes, base.workspaceThemes),
+    snor: snorConfigFromJSON(r.snor),
   };
 }
 

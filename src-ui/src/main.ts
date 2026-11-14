@@ -8,12 +8,13 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SessionStore, newTabCwd, type Tab, type Workspace } from "./sessions";
 import { xtermTheme, colorFor, sessionColorMap, applyTheme, themeNames, MUIS_THEME } from "./theme";
-import { defaultConfig, configFromJSON, clampScrollback, bellAction, effectiveFontSize, segmentVisible, themeForWorkspace, type AppConfig } from "./config";
+import { defaultConfig, configFromJSON, clampScrollback, bellAction, effectiveFontSize, segmentVisible, themeForWorkspace, clampSnorContext, clampSnorPanelWidth, type AppConfig } from "./config";
 import { clampIndex, filterCommands, type Command } from "./commands";
 import { QueryHistory } from "./history";
 import { WorkerClient, type Transport } from "./worker";
 import { SearchController } from "./search";
 import { SidePanelRegistry } from "./panels";
+import { buildSnorContext, snorModelName, snorPrompt, snorStateLabel } from "./snor";
 import { newActivityState, isTabBusy, anyTabBusy, forgetTab } from "./activity";
 import { OscParser, type NotifyEvent } from "./osc";
 import { CommandTracker, tabLabel as tabLabelOf } from "./commandbar";
@@ -224,9 +225,8 @@ const activity = newActivityState();
 const oscParsers = new Map<string, OscParser>();
 
 /**
- * Reserved extension slot (Snor assistant and future panels). Panels
- * dock right of the terminal; nothing is registered yet, so the slot
- * stays invisible until panel code lands.
+ * Extension slots (the Snor assistant). Panels dock right of the
+ * terminal; the slot stays invisible until one is registered and shown.
  */
 export const sidePanels = new SidePanelRegistry();
 
@@ -410,7 +410,8 @@ const panelSlot = document.createElement("div");
 panelSlot.className = "sidepanel";
 panelSlot.style.display = "none";
 
-app.append(titlebar, mainRow, panelSlot);
+mainRow.append(sidebar, center, panelSlot);
+app.append(titlebar, mainRow);
 
 /* ---------------- titlebar: search + window controls ---------------- */
 
@@ -1449,9 +1450,12 @@ function renderTerms(ws: Workspace | undefined): void {
 const stCwd = el("span", "", "");
 const stGit = el("span", "pill", "");
 const stClock = el("span", "clock", "");
+const snorBtn = el("button", "pill snor-toggle", "✦ Snor");
+snorBtn.title = "Snor local assistant (ctrl + shift + a)";
+snorBtn.addEventListener("click", () => toggleSnor());
 // Context on the left, clock on the far right.
-statusbar.append(stCwd, stGit, el("span", ""), stClock);
-(statusbar.children[2] as HTMLElement).style.marginLeft = "auto";
+statusbar.append(stCwd, stGit, snorBtn, el("span", ""), stClock);
+(statusbar.children[3] as HTMLElement).style.marginLeft = "auto";
 
 const gitCache = new Map<string, string>();
 
@@ -1511,8 +1515,12 @@ export function panelContent(id: string): HTMLElement | null {
 function renderPanelSlot(): void {
   const id = sidePanels.visible();
   panelSlot.style.display = id ? "flex" : "none";
-  if (!id) return;
+  panelSlot.style.width = `${cfg.snor.panelWidth}px`;
   panelSlot.innerHTML = "";
+  if (!id) return;
+  const grip = el("div", "sidepanel-grip");
+  grip.title = "Drag to resize";
+  grip.addEventListener("pointerdown", (e) => startPanelResize(e));
   const def = sidePanels.list().find((p) => p.id === id);
   const head = el("div", "side-label");
   head.append(el("span", "", def?.title ?? id));
@@ -1524,7 +1532,330 @@ function renderPanelSlot(): void {
   head.append(close);
   const body = el("div", "");
   body.setAttribute("data-panel-body", "");
-  panelSlot.append(head, body);
+  panelSlot.append(grip, head, body);
+  def?.mount?.(body);
+}
+
+/** Persist view settings; test mode and browser preview stay in memory. */
+function persistConfig(): Promise<void> {
+  if (!IN_TAURI) return Promise.resolve();
+  return invoke("config_save", { json: JSON.stringify(cfg) })
+    .then(() => undefined)
+    .catch(() => undefined);
+}
+
+function startPanelResize(e: PointerEvent): void {
+  e.preventDefault();
+  const startX = e.clientX;
+  const startWidth = panelSlot.getBoundingClientRect().width;
+  const move = (ev: PointerEvent): void => {
+    const width = clampSnorPanelWidth(startWidth + (startX - ev.clientX));
+    panelSlot.style.width = `${width}px`;
+  };
+  const up = (): void => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    const width = Math.round(panelSlot.getBoundingClientRect().width);
+    cfg = { ...cfg, snor: { ...cfg.snor, panelWidth: clampSnorPanelWidth(width) } };
+    void persistConfig();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+/* ---------------- Snor assistant panel ---------------- */
+
+interface SnorTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+interface SnorEngineStatus {
+  state: "stopped" | "starting" | "ready" | "streaming" | "error";
+  model: string | null;
+  error: string | null;
+  server: string | null;
+}
+
+let snorStatus: SnorEngineStatus = {
+  state: "stopped",
+  model: null,
+  error: null,
+  server: null,
+};
+let snorServerMissing = false;
+const snorConversations = new Map<string, SnorTurn[]>();
+/** Conversation receiving the current stream, even if the user switches. */
+let snorActive: SnorTurn[] | null = null;
+let snorStatusEl: HTMLElement | null = null;
+let snorConfigEl: HTMLElement | null = null;
+let snorLogEl: HTMLElement | null = null;
+let snorChipsEl: HTMLElement | null = null;
+let snorInputEl: HTMLTextAreaElement | null = null;
+let snorSendEl: HTMLButtonElement | null = null;
+let snorStopEl: HTMLButtonElement | null = null;
+let snorLiveEl: HTMLElement | null = null;
+
+function snorConversation(): SnorTurn[] {
+  const id = store.currentWorkspace()?.id ?? "none";
+  let list = snorConversations.get(id);
+  if (!list) {
+    list = [];
+    snorConversations.set(id, list);
+  }
+  return list;
+}
+
+function toggleSnor(): void {
+  const visible = sidePanels.toggle("snor");
+  renderPanelSlot();
+  if (visible) {
+    snorInputEl?.focus();
+    void refreshSnorStatus();
+  }
+}
+
+function snorBusy(): boolean {
+  return snorStatus.state === "starting" || snorStatus.state === "streaming";
+}
+
+function applySnorStatus(status: SnorEngineStatus): void {
+  snorStatus = status;
+  renderSnor();
+}
+
+async function refreshSnorStatus(): Promise<void> {
+  if (!IN_TAURI) return;
+  try {
+    snorServerMissing = !(await invoke<boolean>("snor_server_available", {
+      serverPath: cfg.snor.serverPath,
+    }));
+    applySnorStatus(await invoke<SnorEngineStatus>("snor_status"));
+  } catch {
+    snorServerMissing = true;
+  }
+}
+
+function snorScrollback(): string[] {
+  const ws = store.currentWorkspace();
+  const tab = ws?.tabs[ws.active];
+  const view = tab ? views.get(tab.id) : undefined;
+  if (!view) return [];
+  const buf = view.term.buffer.active;
+  const lines: string[] = [];
+  for (let i = 0; i < buf.length; i++) {
+    const line = buf.getLine(i);
+    const text = line ? line.translateToString(true).trimEnd() : "";
+    if (text.trim()) lines.push(text);
+  }
+  return lines;
+}
+
+async function snorSend(): Promise<void> {
+  const text = snorInputEl?.value.trim() ?? "";
+  if (!text || snorBusy()) return;
+  if (!cfg.snor.modelPath) {
+    renderSnor();
+    return;
+  }
+  const ws = store.currentWorkspace();
+  const tab = ws?.tabs[ws.active];
+  const context = buildSnorContext({
+    tabTitle: tab?.title,
+    cwd: tab?.cwd,
+    scrollback: snorScrollback(),
+    maxLines: cfg.snor.contextLines,
+  });
+  const conversation = snorConversation();
+  conversation.push({ role: "user", text: snorPrompt(text, context.text) });
+  conversation.push({ role: "assistant", text: "" });
+  snorActive = conversation;
+  if (snorInputEl) snorInputEl.value = "";
+  renderSnor();
+  try {
+    if (snorStatus.state !== "ready") {
+      applySnorStatus(
+        await invoke<SnorEngineStatus>("snor_start", {
+          modelPath: cfg.snor.modelPath,
+          ctxSize: cfg.snor.contextSize,
+          gpuLayers: cfg.snor.gpuLayers,
+          serverPath: cfg.snor.serverPath,
+        }),
+      );
+    }
+    const request = {
+      messages: conversation
+        .slice(0, -1)
+        .map((turn) => ({ role: turn.role, content: turn.text })),
+      system: cfg.snor.systemPrompt,
+      temperature: cfg.snor.temperature,
+    };
+    await invoke("snor_send", { request });
+  } catch (err) {
+    snorFailed(err);
+  }
+}
+
+function snorFailed(err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  const conversation = snorActive ?? snorConversation();
+  snorActive = null;
+  const last = conversation[conversation.length - 1];
+  if (last && last.role === "assistant" && !last.text) last.text = `⚠ ${message}`;
+  else conversation.push({ role: "assistant", text: `⚠ ${message}` });
+  snorStatus = { ...snorStatus, state: "error", error: message };
+  renderSnor();
+}
+
+function snorClear(): void {
+  snorActive = null;
+  snorConversations.set(store.currentWorkspace()?.id ?? "none", []);
+  renderSnor();
+}
+
+async function chooseSnorModel(): Promise<void> {
+  if (!IN_TAURI) return;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const picked = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: "GGUF model", extensions: ["gguf"] }],
+  });
+  if (typeof picked === "string" && picked.trim()) {
+    cfg = { ...cfg, snor: { ...cfg.snor, modelPath: picked.trim() } };
+    await persistConfig();
+    renderSnor();
+  }
+}
+
+function snorChip(text: string, action?: () => void): HTMLElement {
+  const chip = action ? el("button", "snor-chip", text) : el("span", "snor-chip", text);
+  if (action) chip.addEventListener("click", action);
+  return chip;
+}
+
+function mountSnor(body: HTMLElement): void {
+  body.classList.add("snor");
+  snorStatusEl = el("div", "snor-status");
+  snorConfigEl = el("div", "snor-config");
+  snorLogEl = el("div", "snor-log");
+  snorChipsEl = el("div", "snor-chips");
+
+  snorInputEl = document.createElement("textarea");
+  snorInputEl.className = "snor-input";
+  snorInputEl.placeholder = "Ask about this terminal…";
+  snorInputEl.rows = 3;
+  snorInputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void snorSend();
+    }
+  });
+
+  snorSendEl = el("button", "btn primary", "Send") as HTMLButtonElement;
+  snorSendEl.addEventListener("click", () => void snorSend());
+  snorStopEl = el("button", "btn", "Stop") as HTMLButtonElement;
+  snorStopEl.addEventListener("click", () => {
+    if (IN_TAURI) void invoke("snor_cancel");
+  });
+  const clear = el("button", "btn", "Clear");
+  clear.addEventListener("click", snorClear);
+  const actions = el("div", "snor-actions");
+  actions.append(snorSendEl, snorStopEl, clear);
+
+  body.append(snorStatusEl, snorConfigEl, snorLogEl, snorChipsEl, snorInputEl, actions);
+  renderSnor();
+  void refreshSnorStatus();
+}
+
+function renderSnor(): void {
+  if (!snorStatusEl || !snorLogEl) return;
+  const model = snorModelName(cfg.snor.modelPath);
+  snorStatusEl.textContent = "";
+  const dot = el("span", `snor-dot ${snorStatus.state}`);
+  const label = el("span", "snor-state", snorStateLabel(snorStatus.state));
+  snorStatusEl.append(dot, label, el("span", "snor-model", model));
+  if (snorStatus.error) {
+    const err = el("div", "snor-error", snorStatus.error);
+    snorStatusEl.append(err);
+  }
+
+  if (snorConfigEl) {
+    snorConfigEl.textContent = "";
+    if (!cfg.snor.modelPath) {
+      snorConfigEl.append(
+        el("div", "snor-hint", "No local model configured. Choose a GGUF file to enable Snor."),
+        snorChip("Choose model…", () => void chooseSnorModel()),
+      );
+    } else if (snorServerMissing) {
+      snorConfigEl.append(
+        el(
+          "div",
+          "snor-hint",
+          "llama-server was not found. Install llama-cpp (Arch: llama-cpp plus ggml-vulkan) or set a server path in settings.",
+        ),
+      );
+    }
+  }
+
+  snorLogEl.textContent = "";
+  const conversation = snorConversation();
+  snorLiveEl = null;
+  for (const turn of conversation) {
+    const row = el("div", `snor-msg ${turn.role}`);
+    row.append(el("div", "snor-role", turn.role === "user" ? "you" : "snor"));
+    const text = el("div", "snor-text", turn.text);
+    row.append(text);
+    snorLogEl.append(row);
+    if (turn.role === "assistant" && turn === conversation[conversation.length - 1]) {
+      snorLiveEl = text;
+    }
+  }
+  snorLogEl.scrollTop = snorLogEl.scrollHeight;
+
+  if (snorChipsEl) {
+    snorChipsEl.textContent = "";
+    const ws = store.currentWorkspace();
+    const tab = ws?.tabs[ws.active];
+    const chips = buildSnorContext({
+      tabTitle: tab?.title,
+      cwd: tab?.cwd,
+      scrollback: [],
+      maxLines: 0,
+    }).chips;
+    if (cfg.snor.contextLines > 0) chips.push(`up to ${cfg.snor.contextLines} scrollback lines`);
+    snorChipsEl.append(el("span", "snor-chips-label", "context:"));
+    if (chips.length === 0) snorChipsEl.append(el("span", "snor-chip", "none"));
+    else for (const chipText of chips) snorChipsEl.append(snorChip(chipText));
+  }
+
+  if (snorSendEl) snorSendEl.disabled = snorBusy() || !cfg.snor.modelPath;
+  if (snorStopEl) snorStopEl.disabled = !snorBusy();
+  snorBtn.classList.toggle("busy", snorBusy());
+  snorBtn.title = `Snor: ${snorStateLabel(snorStatus.state)}`;
+}
+
+sidePanels.register({ id: "snor", title: "Snor", mount: mountSnor });
+
+if (IN_TAURI) {
+  void listen<{ text: string }>("snor-token", (event) => {
+    const conversation = snorActive;
+    if (!conversation) return;
+    const last = conversation[conversation.length - 1];
+    if (!last || last.role !== "assistant") return;
+    last.text += event.payload.text;
+    if (snorLiveEl) {
+      snorLiveEl.textContent = last.text;
+      if (snorLogEl) snorLogEl.scrollTop = snorLogEl.scrollHeight;
+    }
+  });
+  void listen("snor-done", () => {
+    snorActive = null;
+    snorStatus = { ...snorStatus, state: "ready", error: null };
+    renderSnor();
+  });
+  void listen<{ message: string }>("snor-error", (event) => snorFailed(event.payload.message));
+  void listen<SnorEngineStatus>("snor-status", (event) => applySnorStatus(event.payload));
 }
 
 /* ---------------- quit guard + shortcuts ---------------- */
@@ -1604,6 +1935,10 @@ const onShortcut = (e: KeyboardEvent): void => {
     case "command-palette":
       e.preventDefault();
       openPalette();
+      break;
+    case "toggle-snor":
+      e.preventDefault();
+      toggleSnor();
       break;
     case "switch-tab":
       if (action.index < ws.tabs.length) {
@@ -1731,6 +2066,46 @@ for (const s of ["none", "visual", "audible", "both"]) {
   o.textContent = s;
   optBell.append(o);
 }
+const optSnorModel = document.createElement("input");
+optSnorModel.type = "text";
+optSnorModel.placeholder = "No model selected";
+optSnorModel.title = "Path to a local GGUF model";
+const snorBrowseBtn = document.createElement("button");
+snorBrowseBtn.type = "button";
+snorBrowseBtn.textContent = "Browse…";
+snorBrowseBtn.addEventListener("click", async () => {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const picked = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: "GGUF model", extensions: ["gguf"] }],
+  });
+  if (typeof picked === "string" && picked.trim()) optSnorModel.value = picked.trim();
+});
+const snorModelRow = document.createElement("div");
+snorModelRow.className = "settings-inline";
+snorModelRow.append(optSnorModel, snorBrowseBtn);
+const optSnorServer = document.createElement("input");
+optSnorServer.type = "text";
+optSnorServer.placeholder = "llama-server (from PATH)";
+optSnorServer.title = "Optional llama-server binary override";
+const optSnorContext = document.createElement("input");
+optSnorContext.type = "number";
+optSnorContext.min = "512";
+optSnorContext.max = "131072";
+optSnorContext.step = "512";
+optSnorContext.title = "Context window, per slot";
+const optSnorGpu = document.createElement("input");
+optSnorGpu.type = "number";
+optSnorGpu.min = "0";
+optSnorGpu.max = "999";
+optSnorGpu.title = "GPU layers offloaded; 0 = CPU only";
+const optSnorLines = document.createElement("input");
+optSnorLines.type = "number";
+optSnorLines.min = "0";
+optSnorLines.max = "5000";
+optSnorLines.step = "50";
+optSnorLines.title = "Trailing scrollback lines attached to each prompt";
 const SEGMENTS: [string, string][] = [
   ["cwd", "cwd"],
   ["git", "git"],
@@ -1774,6 +2149,13 @@ settingsBody.append(
   settingsSection("Statusbar", [
     settingsBlock("Visible segments", segBox),
   ]),
+  settingsSection("Snor (local assistant)", [
+    settingsRow("Model (.gguf)", snorModelRow),
+    settingsRow("llama-server", optSnorServer),
+    settingsRow("Context size", optSnorContext),
+    settingsRow("GPU layers", optSnorGpu),
+    settingsRow("Scrollback lines", optSnorLines),
+  ]),
 );
 settingsOverlay.append(settingsBox);
 document.body.append(settingsOverlay);
@@ -1787,6 +2169,11 @@ function openSettings(): void {
   optCursorStyle.value = cfg.cursorStyle;
   optCursorBlink.checked = cfg.cursorBlink;
   optBell.value = cfg.bell;
+  optSnorModel.value = cfg.snor.modelPath ?? "";
+  optSnorServer.value = cfg.snor.serverPath ?? "";
+  optSnorContext.value = cfg.snor.contextSize.toString();
+  optSnorGpu.value = cfg.snor.gpuLayers.toString();
+  optSnorLines.value = cfg.snor.contextLines.toString();
   for (const [id, cb] of Object.entries(segOpts)) {
     cb.checked = segmentVisible(cfg.statusbar, id);
   }
@@ -1815,6 +2202,15 @@ async function applySettings(): Promise<void> {
       Object.entries(segOpts).map(([id, cb]) => [id, cb.checked]),
     ),
     workspaceThemes: cfg.workspaceThemes,
+    snor: {
+      ...cfg.snor,
+      modelPath: optSnorModel.value.trim() || null,
+      serverPath: optSnorServer.value.trim() || null,
+      contextSize: clampSnorContext(Number(optSnorContext.value)),
+      gpuLayers: Math.max(0, Math.floor(Number(optSnorGpu.value)) || 0),
+      contextLines: Math.max(0, Math.floor(Number(optSnorLines.value)) || 0),
+      panelWidth: clampSnorPanelWidth(cfg.snor.panelWidth),
+    },
   };
   if (IN_TAURI) void invoke("config_save", { json: JSON.stringify(cfg) }).catch(() => {});
   applyTheme(cfg.theme);
@@ -1901,6 +2297,7 @@ function openPalette(): void {
   };
   if (ws) {
     add("new-tab", "New terminal tab", () => addShellTab(ws));
+    add("snor", "Toggle Snor assistant", () => toggleSnor());
     if (active) add("close-tab", "Close tab", () => closeTab(ws.id, active.id));
     if (ws.tabs.length > 1) {
       add("next-tab", "Next tab", () => {

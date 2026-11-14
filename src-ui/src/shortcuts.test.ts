@@ -74,6 +74,13 @@ describe("resolveShortcut", () => {
     });
   });
 
+  it("toggles the Snor panel with ctrl+shift+a", () => {
+    expect(resolveShortcut(key({ key: "a", ctrlKey: true, shiftKey: true }))).toEqual({
+      type: "toggle-snor",
+    });
+    expect(resolveShortcut(key({ key: "a", ctrlKey: true }))).toBeNull();
+  });
+
   it("reports escape and ignores plain keys", () => {
     expect(resolveShortcut(key({ key: "Escape" }))).toEqual({ type: "close-overlay" });
     expect(resolveShortcut(key({ key: "a" }))).toBeNull();

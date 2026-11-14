@@ -1,6 +1,8 @@
 # Snor: local AI plan
 
-Status: **proposed / research**. Planning document, not a commitment.
+Status: **phases 1-3 implemented (first slice)**. Planning document with
+the spike results; the panel, supervisor, streaming, and settings are in
+the tree. Remaining work is listed at the end.
 Checked against `main` at `463b078` (2026-10-24); the Phase 0 spike in
 this document ran on that commit.
 
@@ -10,22 +12,26 @@ covers the architecture, a phased build, and the decisions still open.
 
 ## What exists today
 
-- `docs/deferred.md` parks the **Snor engine**: the side-panel slot is
-  ready, the engine is not.
-- The slot exists: `SidePanelRegistry` (`src-ui/src/panels.ts`) with the
-  docked right-side host in `src-ui/src/main.ts` (`panelSlot` at
-  `main.ts:409`, `panelContent`/`renderPanelSlot` at `main.ts:1496-1517`).
-  Nothing is registered yet. The slot is still appended to the column
-  container; it must move into the `.main` row before it can dock on the
-  right.
+- `docs/deferred.md` tracks the remaining Snor work (downloads,
+  persistence, tools).
+- The engine: `crates/muis-shell/src/snor.rs` supervises one
+  `llama-server` child (lazy start, loopback bind, per-launch key,
+  `/health` readiness, `--parallel 1`), streams
+  `/v1/chat/completions`, and kills the child on app exit.
+- The panel: `src-ui/src/main.ts` (mount) + `src-ui/src/snor.ts`
+  (context building). It docks into `.main`, is resizable, and is
+  toggled with `ctrl+shift+a` or the statusbar button.
+- Settings: model path, `llama-server` override, context size, GPU
+  layers, and attached scrollback lines.
+- The slot: `SidePanelRegistry` (`src-ui/src/panels.ts`) with the docked
+  right-side host in `src-ui/src/main.ts`; the dock now lives in the
+  `.main` row and panels provide a mount callback.
 - An earlier agent-integration plan (since removed from the tree) decided
   that a future Snor would run as a **side-panel ACP engine**. The ACP
   pane itself was also removed; muis now integrates external agents only
   through their terminal TUIs and the notification/restore hooks.
-- There is **no** existing plan for llama.cpp, GGUF loading, model
-  download, GPU offload, or local inference anywhere in the docs.
 
-So Snor is a new workstream. It should refine the deferred Snor line, not
+So Snor is a new workstream. It refines the deferred Snor line, not
 replace the terminal-agent work.
 
 ## Goal
