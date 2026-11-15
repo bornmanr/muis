@@ -143,10 +143,14 @@ body{
 .newtab{border:1px solid transparent; background:transparent; color:var(--dim); border-radius:4px 4px 0 0; padding:7px 12px; cursor:pointer; flex:0 0 auto}
 .newtab:hover{color:#fff; background:#31363b}
 @keyframes pulse{50%{opacity:.25}}
+/* A pending completion keeps the tab green without animating: it is work
+   waiting for the user, not an alarm. */
 .tab.done{border-color:var(--green); box-shadow:inset 0 2px 0 var(--green)}
-.tab.done .t-dot{animation:pulse 1s infinite}
-.t-done{background:var(--green); color:#10210f; font-size:10px; font-weight:700; border-radius:3px; padding:0 5px; animation:pulse 1s infinite}
-.s-dot.notify{background:var(--green); box-shadow:0 0 10px var(--green); animation:pulse 1s infinite}
+.t-state{background:var(--green); color:#10210f; font-size:10px; font-weight:700; border-radius:3px; padding:0 5px}
+/* Sidebar: a fresh alert counts and pulses, one the user already looked at
+   only leaves a steady dot. */
+.s-dot.notify{background:var(--green); box-shadow:0 0 10px var(--green)}
+.s-dot.notify.unseen{animation:pulse 1s infinite}
 .s-badge{background:var(--green); color:#10210f; font-size:10px; font-weight:700; border-radius:8px; padding:0 6px; margin-right:-4px}
 .term-wrap{flex:1; display:flex; min-height:0; background:var(--bg0); position:relative}
 .statusbar{

@@ -20,7 +20,7 @@ import { CommandTracker, tabLabel as tabLabelOf } from "./commandbar";
 import { shouldToastOnFinish } from "./finish";
 import { collectMatches, type SearchHit, type SearchScope, type SearchableTab } from "./searchall";
 import { resolveShortcut } from "./shortcuts";
-import { DoneTracker } from "./done";
+import { DoneTracker, sidebarAttention, tabAttentionLabel, type Attention } from "./done";
 import { NotifyRouter, notifyEventFromCli, notifyEventFromCommand, type CliNotify } from "./notify";
 import {
   applyAgentReport,
@@ -696,12 +696,14 @@ function ensureView(sessionId: string, tab: Tab): TabView {
     })();
     term.onData((data) => {
       trackInput(tab.id, data);
+      acknowledgeAlert(tab.id);
       void client.write(sessionId, tab.id, enc.encode(data));
     });
   } else {
     term.writeln("browser preview — local echo only; run in the Tauri window for real ptys.");
     term.onData((data) => {
       trackInput(tab.id, data);
+      acknowledgeAlert(tab.id);
       term.write(data);
     });
   }
@@ -763,6 +765,11 @@ function observeOsc(sessionId: string, tab: Tab, data: Uint8Array): void {
       const st = commandTracker.state(tabNow.id);
       const cmd = ev.cmd || st.input.trim() || currentInputLine(tabNow.id);
       commandTracker.onCmdStart(tabNow.id, cmd);
+      // A new command means the previous completion is handled.
+      if (doneTabs.has(tabNow.id)) {
+        doneTabs.clear(tabNow.id);
+        changed = true;
+      }
       renderCommandHead(tabNow.id);
     } else if (ev.type === "cmd-end") {
       finishCommand(tabNow.id, ev.exit);
@@ -898,9 +905,10 @@ function renderAll(): void {
   // A session with no tabs is a valid state: it shows only the + tab
   // button and no terminal, and is kept until the user closes the session
   // or exits its last process. New sessions open a tab in addSession.
-  // Looking at a tab acknowledges its finished command.
+  // Looking at a tab acknowledges its completion without dropping it: the
+  // tab stays marked until the user works in it (input or next command).
   const active = ws?.tabs[ws.active];
-  if (active) doneTabs.clear(active.id);
+  if (active) doneTabs.see(active.id);
   updateWindowTitle();
   sidebar.style.display = cfg.showSessions ? "" : "none";
   renderSessions();
@@ -1276,8 +1284,6 @@ function sessionElement(w: Workspace, selected: boolean, col: string): HTMLEleme
   const empty = w.tabs.length === 0;
   const d = el("div", "session" + (selected ? " active" : "") + (empty ? " empty" : ""));
   d.dataset.i = String(idx);
-  // Finished background tabs in hidden sessions surface as a badge.
-  const doneN = selected ? 0 : w.tabs.filter((t) => isTabDone(t.id)).length;
   const icon = el("div", "s-icon", sessionGlyph(w.name));
   if (empty) {
     icon.style.background = "#2d3237";
@@ -1294,10 +1300,17 @@ function sessionElement(w: Workspace, selected: boolean, col: string): HTMLEleme
     el("div", "s-sub", `${w.tabs.length} tab${w.tabs.length === 1 ? "" : "s"} · ${shortPath(w.dir)}`),
   );
   d.append(icon, meta);
-  // Only unfinished work the user has not seen gets the count + dot. An
-  // idle session has no indicator so the sidebar stays quiet.
-  if (doneN > 0) {
-    d.append(el("span", "s-badge", String(doneN)));
+  // Hidden sessions surface work the user has not dealt with: a fresh alert
+  // pulses with a count, one the user already glanced at (or a dead pty)
+  // only leaves a steady dot.
+  const attention = sidebarAttention(
+    w.tabs.map((t) => tabAttention(t.id)),
+    selected,
+  );
+  if (attention.count > 0) {
+    d.append(el("span", "s-badge", String(attention.count)));
+    d.append(el("div", "s-dot notify unseen"));
+  } else if (attention.dot) {
     d.append(el("div", "s-dot notify"));
   }
   d.addEventListener("click", () => {
@@ -1384,7 +1397,10 @@ function tabElement(ws: Workspace, tab: Tab, selected: boolean): HTMLElement {
   dot.style.background = tcol;
   const title = el("span", "t-name", label);
   d.append(dot, title);
-  if (done) d.append(el("span", "t-done", "✓ done"));
+  // A pending completion reads "waiting" — it wants the user, and stays
+  // green until they work in the tab. Only a dead pty reads "done".
+  const chip = tabAttentionLabel(tabAttention(tab.id), activity.exited.has(tab.id));
+  if (chip) d.append(el("span", "t-state", chip));
   const x = el("span", "x", "✕");
   x.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -2031,9 +2047,25 @@ function isTabDone(tabId: string): boolean {
   return doneTabs.has(tabId) || activity.exited.has(tabId);
 }
 
+/** One tab's alert state, collapsed for the chrome. */
+function tabAttention(tabId: string): Attention {
+  if (doneTabs.isUnseen(tabId)) return "unseen";
+  if (doneTabs.has(tabId) || activity.exited.has(tabId)) return "seen";
+  return null;
+}
+
 function isTabVisible(tabId: string): boolean {
   const ws = store.currentWorkspace();
   return ws?.tabs[ws.active]?.id === tabId;
+}
+
+/** Typing in a visible tab means the completion it flagged is handled. */
+function acknowledgeAlert(tabId: string): void {
+  if (!doneTabs.has(tabId) || !isTabVisible(tabId)) return;
+  doneTabs.clear(tabId);
+  renderTabs();
+  renderSessions();
+  updateWindowTitle();
 }
 
 function renderCommandHead(tabId: string): void {
@@ -2388,7 +2420,7 @@ document.addEventListener("click", (e) => {
 
 function updateWindowTitle(): void {
   const n = doneTabs.count();
-  const base = n > 0 ? `● (${n}) done — muis` : `muis — ${store.currentWorkspace()?.name ?? ""}`;
+  const base = n > 0 ? `● (${n}) waiting — muis` : `muis — ${store.currentWorkspace()?.name ?? ""}`;
   document.title = testModeActive ? `[test] ${base}` : base;
 }
 
