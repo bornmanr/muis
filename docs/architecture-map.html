@@ -828,7 +828,7 @@
       <rect x="46" y="458" width="298" height="28" rx="5" class="mod"/><text x="58" y="477" class="t2">osc.ts  — OSC 7/0/2/9/777/99/133</text>
       <rect x="46" y="492" width="298" height="28" rx="5" class="mod"/><text x="58" y="511" class="t2">commandbar.ts  — last command</text>
       <rect x="46" y="526" width="298" height="28" rx="5" class="mod"/><text x="58" y="545" class="t2">activity.ts  — busy-tab policy</text>
-      <rect x="46" y="560" width="298" height="28" rx="5" class="mod"/><text x="58" y="579" class="t2">done.ts  — unread completion badges</text>
+      <rect x="46" y="560" width="298" height="28" rx="5" class="mod"/><text x="58" y="579" class="t2">done.ts  — unseen/seen completion marks</text>
       <rect x="46" y="594" width="298" height="28" rx="5" class="mod"/><text x="58" y="613" class="t2">finish.ts · notify.ts  — toast policy</text>
 
       <rect x="800" y="40" width="330" height="214" rx="10" class="grp"/>
@@ -863,8 +863,8 @@
   <h3>Window regions</h3>
   <div class="grid g3">
     <div class="card"><h4>Titlebar</h4><p>Frameless drag region, app icon/title, search box (cross-session search, regex/case, history), window controls, test-mode badge.</p></div>
-    <div class="card"><h4>Sessions sidebar</h4><p>One tile per workspace with color/glyph, tab count, cwd, done badge, reorder drag, context menu, new-session dialog with folder picker and subfolder quick picks.</p></div>
-    <div class="card"><h4>Tabbar</h4><p>One tab per PTY, active state, done state, last-command label, close/middle-click, reorder, drag into another session, new-tab and settings buttons.</p></div>
+    <div class="card"><h4>Sessions sidebar</h4><p>One tile per workspace with color/glyph, tab count, cwd, attention count/dot, reorder drag, context menu, new-session dialog with folder picker and subfolder quick picks.</p></div>
+    <div class="card"><h4>Tabbar</h4><p>One tab per PTY, active state, waiting/done chip, last-command label, close/middle-click, reorder, drag into another session, new-tab and settings buttons.</p></div>
     <div class="card"><h4>Terminal column</h4><p>One xterm surface per tab, a last-command head, WebGL with canvas fallback, FitAddon, SearchAddon, OSC 8 links, bell modes, clipboard modes.</p></div>
     <div class="card"><h4>Statusbar</h4><p>cwd, git branch, and clock. The config still accepts segment visibility flags, but only these three are rendered.</p></div>
     <div class="card"><h4>Overlays / slots</h4><p>Settings dialog, command palette, session dialog, context menu, search results, and a reserved right-side panel slot (no panel registered yet).</p></div>
@@ -943,8 +943,8 @@
 
       <rect x="724" y="212" width="190" height="86" rx="8" class="nbY"/>
       <text x="738" y="234" class="nt">DoneTracker</text>
-      <text x="738" y="254" class="ns">tab badge ✓ done</text>
-      <text x="738" y="270" class="ns">sidebar badge</text>
+      <text x="738" y="254" class="ns">tab chip waiting</text>
+      <text x="738" y="270" class="ns">sidebar count / dot</text>
       <text x="738" y="286" class="ns">window title count</text>
 
       <rect x="954" y="212" width="180" height="86" rx="8" class="nbP"/>
