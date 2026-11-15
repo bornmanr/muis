@@ -195,6 +195,20 @@ export function opencodeResume(id: string): string {
 }
 
 /**
+ * True when a shell-reported command is the resume line muis injected while
+ * restoring a tab. Starting it is not new work by the user: the tab is
+ * picking its session back up and must keep its waiting mark.
+ */
+export function isInjectedResume(
+  injected: string | null | undefined,
+  cmd: string | null | undefined,
+): boolean {
+  const a = injected?.trim();
+  const b = cmd?.trim();
+  return !!a && a === b;
+}
+
+/**
  * The session a restored tab should resume, or null to leave it as a plain
  * shell. Only sessions present in the live list for this directory are
  * eligible; a deleted session never launches a broken opencode.

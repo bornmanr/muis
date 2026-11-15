@@ -23,6 +23,7 @@ import { resolveShortcut } from "./shortcuts";
 import { DoneTracker, sidebarAttention, tabAttentionLabel, type Attention } from "./done";
 import { NotifyRouter, notifyEventFromCli, notifyEventFromCommand, type CliNotify } from "./notify";
 import {
+  isInjectedResume,
   tabForReport,
   applyAgentReport,
   isOpencodeTitle,
@@ -180,6 +181,8 @@ interface CliAgentSession {
 
 /** Tabs whose restore launch already ran this session. */
 const agentLaunched = new Set<string>();
+/** Resume line injected per tab, so the shell's cmd-start for it is ignored. */
+const restoreCommands = new Map<string, string>();
 /** opencode's session list is per directory; fetch once per launch. */
 const opencodeSessionsCache = new Map<string, Promise<AgentSessionInfo[]>>();
 let saveTimer: number | undefined;
@@ -777,8 +780,12 @@ function observeOsc(sessionId: string, tab: Tab, data: Uint8Array): void {
       const st = commandTracker.state(tabNow.id);
       const cmd = ev.cmd || st.input.trim() || currentInputLine(tabNow.id);
       commandTracker.onCmdStart(tabNow.id, cmd);
-      // A new command means the previous completion is handled.
-      if (doneTabs.has(tabNow.id)) {
+      // A new command means the previous completion is handled — except the
+      // resume line muis typed itself, which is the tab picking its session
+      // back up, not the user starting new work.
+      if (isInjectedResume(restoreCommands.get(tabNow.id), cmd)) {
+        restoreCommands.delete(tabNow.id);
+      } else if (doneTabs.has(tabNow.id)) {
         doneTabs.clear(tabNow.id);
         changed = true;
       }
@@ -2183,6 +2190,7 @@ function maybeNotifyFinished(tabId: string): void {
 function forgetTabState(tabId: string): void {
   commandTracker.forget(tabId);
   doneTabs.forget(tabId);
+  restoreCommands.delete(tabId);
   notifyRouter.forget(tabId);
   window.clearTimeout(idleFallback.get(tabId));
   idleFallback.delete(tabId);
@@ -2502,7 +2510,9 @@ async function restoreAgentTab(entry: RestoreEntry): Promise<void> {
   await waitForTabOutput(tab.id, 1500);
   await delay(150);
   if (!views.has(tab.id)) return;
-  await client.write(ws.id, tab.id, enc.encode(`${opencodeResume(id)}\n`)).catch(() => {});
+  const resume = opencodeResume(id);
+  restoreCommands.set(tab.id, resume);
+  await client.write(ws.id, tab.id, enc.encode(`${resume}\n`)).catch(() => {});
   // A resumed session is sitting at its prompt waiting for the user, exactly
   // like a tab that just finished a turn: mark it as seen so the restored
   // window still says where the work was left off.

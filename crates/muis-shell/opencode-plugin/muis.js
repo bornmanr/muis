@@ -1,4 +1,4 @@
-// muis-plugin v8
+// muis-plugin v9
 // muis opencode server plugin: notify muis when a turn finishes or when
 // opencode pauses for input, so the tab gets the waiting mark + toast, and
 // report the exact session id as a fallback when the TUI plugin is

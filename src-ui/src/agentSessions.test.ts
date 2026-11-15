@@ -14,6 +14,7 @@ import {
   validSessionId,
   type AgentSessionInfo,
   applyAgentReport,
+  isInjectedResume,
   tabForReport,
 } from "./agentSessions";
 import type { Tab, Workspace } from "./sessions";
@@ -293,5 +294,21 @@ describe("tabForReport", () => {
 
   it("returns undefined when neither route matches", () => {
     expect(tabForReport(workspaces(), "t-missing", "ses_missing")).toBeUndefined();
+  });
+});
+
+describe("isInjectedResume", () => {
+  it("matches the resume line muis typed, ignoring surrounding space", () => {
+    const injected = "opencode --session ses_abc";
+    expect(isInjectedResume(injected, "opencode --session ses_abc")).toBe(true);
+    expect(isInjectedResume(injected, " opencode --session ses_abc ")).toBe(true);
+  });
+
+  it("never matches a real command or a missing record", () => {
+    const injected = "opencode --session ses_abc";
+    expect(isInjectedResume(injected, "opencode")).toBe(false);
+    expect(isInjectedResume(injected, "opencode --session ses_other")).toBe(false);
+    expect(isInjectedResume(undefined, "opencode --session ses_abc")).toBe(false);
+    expect(isInjectedResume(injected, null)).toBe(false);
   });
 });
