@@ -25,12 +25,15 @@ this removal, especially `.github/workflows/release.yml`, `packaging/flatpak/`,
 `aur/`, `crates/muis-shell/tauri.conf.json`, and the platform branches in
 `crates/muis-worker`.
 
-## Deferred to later
+## Settled scope
 
-- **Website** (rollout Phase 5): the download + showcase site.
-- **Auto-update story:** package managers for Arch/Veldmuis; manual updates
-  otherwise.
-- **aarch64 package:** only if Veldmuis ever targets ARM.
+- **Updates:** package managers only. muis makes no update checks and never
+  self-updates; the website links to GitHub releases.
+- **Website:** the landing page lives in `ruannnebornman/muis-website` and is
+  deployed to `muis.veldmuislinux.org` through Cloudflare Pages.
+- **Packaging:** the single Linux tarball. Windows, Flatpak, AppImage, and AUR
+  stay removed.
+- **aarch64:** not planned; Veldmuis targets x86_64.
 
 ## Abandoned
 
