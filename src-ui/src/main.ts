@@ -23,6 +23,7 @@ import { resolveShortcut } from "./shortcuts";
 import { DoneTracker, sidebarAttention, tabAttentionLabel, type Attention } from "./done";
 import { NotifyRouter, notifyEventFromCli, notifyEventFromCommand, type CliNotify } from "./notify";
 import {
+  isInjectedResume,
   tabForReport,
   applyAgentReport,
   isOpencodeTitle,
@@ -180,6 +181,8 @@ interface CliAgentSession {
 
 /** Tabs whose restore launch already ran this session. */
 const agentLaunched = new Set<string>();
+/** Resume line injected per tab, so the shell's cmd-start for it is ignored. */
+const restoreCommands = new Map<string, string>();
 /** opencode's session list is per directory; fetch once per launch. */
 const opencodeSessionsCache = new Map<string, Promise<AgentSessionInfo[]>>();
 let saveTimer: number | undefined;
@@ -777,9 +780,17 @@ function observeOsc(sessionId: string, tab: Tab, data: Uint8Array): void {
       const st = commandTracker.state(tabNow.id);
       const cmd = ev.cmd || st.input.trim() || currentInputLine(tabNow.id);
       commandTracker.onCmdStart(tabNow.id, cmd);
-      // A new command means the previous completion is handled.
-      if (doneTabs.has(tabNow.id)) {
+      reportDebugStage("cmd-start", { tab: tabNow.id, cmd });
+      // A new command means the previous completion is handled — unless the
+      // tab is owned by an agent. There the mark belongs to the agent and only
+      // a reply (`muis-notify --running`) or closing the tab may drop it: the
+      // resume line muis types during restore, and the prompt text some shells
+      // report as a command start, must not.
+      if (isInjectedResume(restoreCommands.get(tabNow.id), cmd)) {
+        restoreCommands.delete(tabNow.id);
+      } else if (doneTabs.has(tabNow.id) && !tabNow.agentSession) {
         doneTabs.clear(tabNow.id);
+        reportDebugStage("attention-cleared", { tab: tabNow.id, reason: "command" });
         changed = true;
       }
       renderCommandHead(tabNow.id);
@@ -2183,6 +2194,7 @@ function maybeNotifyFinished(tabId: string): void {
 function forgetTabState(tabId: string): void {
   commandTracker.forget(tabId);
   doneTabs.forget(tabId);
+  restoreCommands.delete(tabId);
   notifyRouter.forget(tabId);
   window.clearTimeout(idleFallback.get(tabId));
   idleFallback.delete(tabId);
@@ -2211,6 +2223,11 @@ function applyNotification(tab: Tab, ev: NotifyEvent): boolean {
   }
   if (!decision.attention) return false;
   doneTabs.mark(tab.id, decision.attention);
+  reportDebugStage("attention-marked", {
+    tab: tab.id,
+    state: decision.attention,
+    reason: "notification",
+  });
   return true;
 }
 
@@ -2233,6 +2250,7 @@ function handleAgentActivity(req: CliAgentActivity): void {
   const tab = tabForReport(store.workspaces, req.tab_id, req.session);
   if (!tab || !doneTabs.has(tab.id)) return;
   doneTabs.clear(tab.id);
+  reportDebugStage("attention-cleared", { tab: tab.id, reason: "resumed" });
   renderTabs();
   renderSessions();
   updateWindowTitle();
@@ -2502,11 +2520,14 @@ async function restoreAgentTab(entry: RestoreEntry): Promise<void> {
   await waitForTabOutput(tab.id, 1500);
   await delay(150);
   if (!views.has(tab.id)) return;
-  await client.write(ws.id, tab.id, enc.encode(`${opencodeResume(id)}\n`)).catch(() => {});
+  const resume = opencodeResume(id);
+  restoreCommands.set(tab.id, resume);
+  await client.write(ws.id, tab.id, enc.encode(`${resume}\n`)).catch(() => {});
   // A resumed session is sitting at its prompt waiting for the user, exactly
   // like a tab that just finished a turn: mark it as seen so the restored
   // window still says where the work was left off.
   doneTabs.mark(tab.id, "seen");
+  reportDebugStage("attention-marked", { tab: tab.id, state: "seen", reason: "restore" });
   renderTabs();
   renderSessions();
   updateWindowTitle();

@@ -304,6 +304,21 @@ mod tests {
     }
 
     #[test]
+    fn a_notification_may_carry_a_session_route() {
+        // The opencode server plugin cannot trust MUIS_TAB_ID, so the session
+        // travels with the notification and must survive the wire.
+        let req: NotifyRequest = serde_json::from_str(
+            r#"{"body":"done","tab_id":"t9","session":"ses_routed"}"#,
+        )
+        .unwrap();
+        assert_eq!(req.session.as_deref(), Some("ses_routed"));
+        assert_eq!(
+            decode_client(&serde_json::to_string(&req).unwrap()),
+            Some(ClientRequest::Notify(req))
+        );
+    }
+
+    #[test]
     fn activity_reports_decode_by_kind_not_as_notifications() {
         let running = ActivityRequest::running(Some("t2".into()), Some("ses_run".into()));
         let json = serde_json::to_string(&running).unwrap();
