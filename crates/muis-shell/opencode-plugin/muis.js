@@ -4,10 +4,15 @@
 // report the exact session id as a fallback when the TUI plugin is
 // unavailable.
 //
-// It also reports the other direction: `session.execution.started` and an
-// admitted prompt mean opencode picked the work back up, so muis clears the
-// tab's waiting mark. The mark therefore survives merely looking at the tab
-// and only goes when the user replies or the tab closes.
+// It also reports the other direction: an admitted prompt, a replied
+// permission, or a replied form mean opencode picked the work back up, so
+// muis clears the tab's waiting mark. The mark therefore survives merely
+// looking at the tab and only goes when the user replies or the tab closes.
+//
+// Every report carries the opencode session id. The server plugin runs in
+// the shared `opencode serve` process, so `MUIS_TAB_ID` there belongs to
+// whichever tab started that server; only the session id identifies the tab
+// that is actually waiting. muis routes by session first, then by tab.
 //
 // Installed by muis at ~/.config/opencode/plugins/muis.js. opencode 2.x only
 // loads a plugin from that directory when the module default-exports a
@@ -30,15 +35,20 @@
 import { spawn } from "node:child_process";
 
 /** Events this plugin keeps state for or turns into notifications. */
+/** Events that mean the user answered and the agent is working again. */
+const REPLY_EVENTS = ["permission.replied", "permission.rejected", "form.replied"];
+
 export const SESSION_EVENTS = [
   "session.created",
   "session.renamed",
   "session.idle",
-  "session.execution.started",
   "session.execution.succeeded",
   "session.execution.failed",
   "form.created",
+  "form.replied",
   "permission.asked",
+  "permission.replied",
+  "permission.rejected",
 ];
 
 /** Fire one helper and never block opencode. */
@@ -124,7 +134,14 @@ export function createMuisPlugin({ reportAgent, notify }) {
         const where = describe(id, event);
         const what = permissionOf(data);
         const body = `${where.summary || "opencode"} needs permission`;
-        notify(["--title", where.title, "--body", what ? `${body}: ${what}` : body]);
+        notify([
+          "--title",
+          where.title,
+          "--body",
+          what ? `${body}: ${what}` : body,
+          "--session",
+          id,
+        ]);
         return;
       }
 
@@ -135,19 +152,26 @@ export function createMuisPlugin({ reportAgent, notify }) {
         const where = describe(id, event);
         const what = typeof form.title === "string" ? form.title.trim() : "";
         const body = `${where.summary || "opencode"} is waiting for your input`;
-        notify(["--title", where.title, "--body", what ? `${body}: ${what}` : body]);
+        notify([
+          "--title",
+          where.title,
+          "--body",
+          what ? `${body}: ${what}` : body,
+          "--session",
+          id,
+        ]);
+        return;
+      }
+
+      // The user answered: the tab is no longer waiting on them.
+      if (REPLY_EVENTS.includes(type)) {
+        const id = data.sessionID;
+        if (typeof id === "string") notify(["--running", "--session", id]);
         return;
       }
 
       const id = data.sessionID;
       if (typeof id !== "string") return;
-
-      // The turn resumed (the user replied, answered a question, or granted
-      // a permission): drop the waiting mark instead of raising an alert.
-      if (type === "session.execution.started") {
-        notify(["--running"]);
-        return;
-      }
 
       if (type === "session.created") {
         const directory = data.location?.directory ?? event.location?.directory ?? "";
@@ -176,7 +200,7 @@ export function createMuisPlugin({ reportAgent, notify }) {
         : where.summary
           ? `${where.summary} has finished`
           : "opencode has finished";
-      notify(["--title", where.title, "--body", body]);
+      notify(["--title", where.title, "--body", body, "--session", id]);
     },
 
     /**
@@ -186,7 +210,7 @@ export function createMuisPlugin({ reportAgent, notify }) {
      */
     prompt(sessionID) {
       report(sessionID);
-      notify(["--running"]);
+      notify(["--running", "--session", sessionID]);
     },
   };
 }

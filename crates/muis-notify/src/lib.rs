@@ -15,13 +15,16 @@
 use muis_core::notify::{self, ActivityRequest, NotifyRequest};
 
 const USAGE: &str = "\
-usage: muis-notify --body TEXT [--title TEXT] [--tab ID] [--urgency 0|1|2] [--socket NAME]
-       muis-notify --running [--tab ID] [--socket NAME]
+usage: muis-notify --body TEXT [--title TEXT] [--tab ID] [--session ID]
+                   [--urgency 0|1|2] [--socket NAME]
+       muis-notify --running [--tab ID] [--session ID] [--socket NAME]
 
 Sends a desktop notification to a running muis window. --running instead
 reports that the agent resumed, which clears the tab's waiting mark.
 Defaults for --socket and --tab come from the MUIS_SOCKET and MUIS_TAB_ID
-environment variables, which muis sets inside its terminals.";
+environment variables, which muis sets inside its terminals. --session
+routes the request to the tab showing that opencode session, which is the
+only reliable route for hooks running in a shared opencode server.";
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Cli {
@@ -30,6 +33,7 @@ struct Cli {
     tab_id: Option<String>,
     urgency: Option<u8>,
     socket: Option<String>,
+    session: Option<String>,
     running: bool,
 }
 
@@ -43,6 +47,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
             "--body" => cli.body = Some(value()?),
             "--tab" => cli.tab_id = Some(value()?),
             "--socket" => cli.socket = Some(value()?),
+            "--session" => cli.session = Some(value()?),
             "--running" => cli.running = true,
             "--urgency" => {
                 let urgency: u8 = value()?
@@ -92,13 +97,14 @@ pub fn run() -> i32 {
     let tab_id = cli.tab_id.or_else(|| std::env::var("MUIS_TAB_ID").ok());
 
     let sent = if cli.running {
-        notify::send_activity(&socket, &ActivityRequest::running(tab_id))
+        notify::send_activity(&socket, &ActivityRequest::running(tab_id, cli.session))
     } else {
         let req = NotifyRequest {
             title: cli.title,
             body: cli.body.unwrap_or_default(),
             tab_id,
             urgency: cli.urgency,
+            session: cli.session,
         };
         notify::send(&socket, &req)
     };
@@ -146,6 +152,7 @@ mod tests {
                 tab_id: Some("t1".into()),
                 urgency: Some(2),
                 socket: Some("s".into()),
+                session: None,
                 running: false,
             }
         );
@@ -164,6 +171,12 @@ mod tests {
         assert!(cli.running);
         assert_eq!(cli.tab_id.as_deref(), Some("t1"));
         assert_eq!(cli.body, None);
+    }
+
+    #[test]
+    fn parses_the_session_route() {
+        let cli = parse_args(args(&["--body", "done", "--session", "ses_abc"])).unwrap();
+        assert_eq!(cli.session.as_deref(), Some("ses_abc"));
     }
 
     #[test]

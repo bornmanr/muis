@@ -17,6 +17,8 @@ export interface CliNotify {
   body: string;
   tab_id?: string | null;
   urgency?: number;
+  /** opencode session the notification is about; routes to that tab. */
+  session?: string | null;
 }
 
 /** Turn a `muis-notify` request into a notification event. */

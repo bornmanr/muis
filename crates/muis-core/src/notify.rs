@@ -34,6 +34,12 @@ pub struct NotifyRequest {
     /// 0 low, 1 normal, 2 critical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub urgency: Option<u8>,
+    /// opencode session the notification is about. The server-side plugin
+    /// runs in a shared opencode server, so its `MUIS_TAB_ID` belongs to
+    /// whichever tab started that server; the session id is the only
+    /// reliable route back to the tab that is actually waiting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 /// What the agent in a tab is doing now. `running` means it picked the work
@@ -47,14 +53,18 @@ pub struct ActivityRequest {
     /// Originating tab, injected into ptys as `MUIS_TAB_ID`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<String>,
+    /// opencode session that resumed, routed like `NotifyRequest::session`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 impl ActivityRequest {
-    pub fn running(tab_id: Option<String>) -> Self {
+    pub fn running(tab_id: Option<String>, session: Option<String>) -> Self {
         Self {
             kind: ACTIVITY_KIND.to_string(),
             state: ACTIVITY_RUNNING.to_string(),
             tab_id,
+            session,
         }
     }
 }
@@ -189,6 +199,7 @@ mod tests {
             body: "b".into(),
             tab_id: Some("t1".into()),
             urgency: Some(2),
+            session: Some("ses_abc".into()),
         };
         let json = serde_json::to_string(&req).unwrap();
         assert_eq!(serde_json::from_str::<NotifyRequest>(&json).unwrap(), req);
@@ -201,6 +212,7 @@ mod tests {
                 body: "hi".into(),
                 tab_id: None,
                 urgency: None,
+                session: None,
             }
         );
     }
@@ -235,6 +247,7 @@ mod tests {
             body: "hello".into(),
             tab_id: Some("t1".into()),
             urgency: None,
+            session: None,
         };
         assert_eq!(
             decode_client(&serde_json::to_string(&notify).unwrap()),
@@ -267,6 +280,7 @@ mod tests {
             body: "hello".into(),
             tab_id: Some("tab-1".into()),
             urgency: None,
+            session: None,
         };
         send(&socket, &req).unwrap();
         assert_eq!(
@@ -281,7 +295,7 @@ mod tests {
             ClientRequest::AgentSession(agent)
         );
 
-        let running = ActivityRequest::running(Some("tab-1".into()));
+        let running = ActivityRequest::running(Some("tab-1".into()), None);
         send_activity(&socket, &running).unwrap();
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(5)).unwrap(),
@@ -291,7 +305,7 @@ mod tests {
 
     #[test]
     fn activity_reports_decode_by_kind_not_as_notifications() {
-        let running = ActivityRequest::running(Some("t2".into()));
+        let running = ActivityRequest::running(Some("t2".into()), Some("ses_run".into()));
         let json = serde_json::to_string(&running).unwrap();
         assert!(json.contains("agent-activity"));
         assert_eq!(
@@ -301,7 +315,7 @@ mod tests {
 
         // A running report without a tab is still decodable; the shell drops
         // it because it cannot say which tab resumed.
-        let bare = ActivityRequest::running(None);
+        let bare = ActivityRequest::running(None, None);
         assert_eq!(
             decode_client(r#"{"kind":"agent-activity","state":"running"}"#),
             Some(ClientRequest::AgentActivity(bare))

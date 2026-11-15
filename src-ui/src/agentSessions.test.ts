@@ -14,6 +14,7 @@ import {
   validSessionId,
   type AgentSessionInfo,
   applyAgentReport,
+  tabForReport,
 } from "./agentSessions";
 import type { Tab, Workspace } from "./sessions";
 
@@ -248,5 +249,49 @@ describe("applyAgentReport", () => {
     expect(applyAgentReport(ws, "t1", "bad", null)).toBe("ignored");
     expect(applyAgentReport(ws, "t1", "ses_x", "/elsewhere")).toBe("ignored");
     expect(ws[0].tabs[0].agentSession).toBe("ses_old");
+  });
+});
+
+describe("tabForReport", () => {
+  const workspaces = (): Workspace[] => [
+    {
+      id: "w1",
+      name: "server",
+      dir: "/srv",
+      active: 0,
+      tabs: [tab({ id: "t-server", agentSession: undefined })],
+    },
+    {
+      id: "w2",
+      name: "work",
+      dir: "/p",
+      active: 0,
+      tabs: [
+        tab({ id: "t10", agentSession: "ses_a" }),
+        tab({ id: "t11", agentSession: "ses_b" }),
+      ],
+    },
+  ];
+
+  it("uses the session when the tab id points at a stale server tab", () => {
+    // The plugin inherits the shared server's MUIS_TAB_ID (t-server), but the
+    // notification is about ses_b.
+    expect(tabForReport(workspaces(), "t-server", "ses_b")?.id).toBe("t11");
+  });
+
+  it("falls back to the tab id when no tab shows that session", () => {
+    expect(tabForReport(workspaces(), "t10", "ses_gone")?.id).toBe("t10");
+  });
+
+  it("falls back to the tab id when there is no session at all", () => {
+    expect(tabForReport(workspaces(), "t10", null)?.id).toBe("t10");
+  });
+
+  it("keeps the tab id when it already shows that session", () => {
+    expect(tabForReport(workspaces(), "t11", "ses_b")?.id).toBe("t11");
+  });
+
+  it("returns undefined when neither route matches", () => {
+    expect(tabForReport(workspaces(), "t-missing", "ses_missing")).toBeUndefined();
   });
 });

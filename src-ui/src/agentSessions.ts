@@ -92,6 +92,27 @@ export function isOpencodeCommand(cmd: string | null | undefined): boolean {
   return prog === "opencode";
 }
 
+/**
+ * The tab a notification or activity report belongs to.
+ *
+ * The opencode server plugin runs inside the shared `opencode serve`
+ * process, so the `MUIS_TAB_ID` it inherits names whichever tab started that
+ * server — often long gone. The session id it carries is authoritative, so
+ * that wins; the tab id is only a fallback for hooks that run in the tab's
+ * own pty (Codex, Claude, Aider).
+ */
+export function tabForReport(
+  workspaces: ReadonlyArray<Workspace>,
+  tabId: string | null | undefined,
+  session: string | null | undefined,
+): Tab | undefined {
+  const tabs = workspaces.flatMap((w) => w.tabs);
+  const byId = tabId ? tabs.find((t) => t.id === tabId) : undefined;
+  if (!validSessionId(session)) return byId;
+  if (byId?.agentSession === session) return byId;
+  return tabs.find((t) => t.agentSession === session) ?? byId;
+}
+
 export type AgentReportResult = "ignored" | "latched" | "cleared";
 
 /**
