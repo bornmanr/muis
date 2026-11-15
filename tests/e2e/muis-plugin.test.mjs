@@ -38,11 +38,13 @@ test("default export is a V2 definition opencode can load", () => {
     "session.created",
     "session.renamed",
     "session.idle",
-    "session.execution.started",
     "session.execution.succeeded",
     "session.execution.failed",
     "form.created",
+    "form.replied",
     "permission.asked",
+    "permission.replied",
+    "permission.rejected",
   ]);
 });
 
@@ -157,24 +159,46 @@ test("prompt reports the exact session for resume tracking", () => {
 test("prompt also clears the waiting mark", () => {
   const { plugin, calls } = harness();
   plugin.prompt("ses_exact2");
-  assert.match(calls.join("\n"), /notify --running/);
+  assert.match(calls.join("\n"), /notify --running --session ses_exact2/);
 });
 
-test("session.execution.started clears the waiting mark without alerting", () => {
+test("notifications carry the session so muis can find the tab", () => {
+  // The server plugin runs in the shared opencode server, where MUIS_TAB_ID
+  // names whichever tab started it: the session is the real route.
   const { plugin, calls } = harness();
-  plugin.event(created("ses_run", { title: "Long turn" }));
-  calls.length = 0;
-  plugin.event({ type: "session.execution.started", data: { sessionID: "ses_run" } });
-  assert.deepEqual(calls, ["notify --running"]);
+  plugin.event(created("ses_route", { title: "Route me" }));
+  plugin.event({ type: "session.execution.succeeded", data: { sessionID: "ses_route" } });
+  assert.match(calls.join("\n"), /--session ses_route/);
 });
 
-test("a completion after a resume still raises an alert", () => {
+test("answering a permission or a form clears the waiting mark", () => {
+  const { plugin, calls } = harness();
+  calls.length = 0;
+  plugin.event({ type: "permission.replied", data: { sessionID: "ses_perm" } });
+  plugin.event({ type: "form.replied", data: { sessionID: "ses_form" } });
+  assert.deepEqual(calls, [
+    "notify --running --session ses_perm",
+    "notify --running --session ses_form",
+  ]);
+});
+
+test("execution events alone never clear the mark", () => {
+  // Background work (title generation, subagents, compaction) starts
+  // executions; only the user answering should clear a waiting tab.
+  const { plugin, calls } = harness();
+  plugin.event(created("ses_bg", { title: "Background" }));
+  calls.length = 0;
+  plugin.event({ type: "session.execution.started", data: { sessionID: "ses_bg" } });
+  assert.deepEqual(calls, []);
+});
+
+test("a completion after a reply still raises an alert", () => {
   const { plugin, calls } = harness();
   plugin.event(created("ses_cycle", { title: "Cycle" }));
-  plugin.event({ type: "session.execution.started", data: { sessionID: "ses_cycle" } });
+  plugin.prompt("ses_cycle");
   plugin.event({ type: "session.execution.succeeded", data: { sessionID: "ses_cycle" } });
   const joined = calls.join("\n");
-  assert.match(joined, /notify --running/);
+  assert.match(joined, /notify --running --session ses_cycle/);
   assert.match(joined, /--body Cycle has finished/);
 });
 

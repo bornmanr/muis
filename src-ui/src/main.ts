@@ -23,6 +23,7 @@ import { resolveShortcut } from "./shortcuts";
 import { DoneTracker, sidebarAttention, tabAttentionLabel, type Attention } from "./done";
 import { NotifyRouter, notifyEventFromCli, notifyEventFromCommand, type CliNotify } from "./notify";
 import {
+  tabForReport,
   applyAgentReport,
   isOpencodeTitle,
   opencodeResume,
@@ -166,6 +167,7 @@ interface CliAgentActivity {
   kind?: string;
   state?: string;
   tab_id?: string | null;
+  session?: string | null;
 }
 
 /** A `muis-agent session` report routed from the shell. */
@@ -2226,9 +2228,11 @@ function handleAgentSession(req: CliAgentSession): void {
  * tab does not clear the mark; replying does.
  */
 function handleAgentActivity(req: CliAgentActivity): void {
-  if (!req?.tab_id || req.state !== "running") return;
-  if (!doneTabs.has(req.tab_id)) return;
-  doneTabs.clear(req.tab_id);
+  if (req.state !== "running") return;
+  if (!req.tab_id && !req.session) return;
+  const tab = tabForReport(store.workspaces, req.tab_id, req.session);
+  if (!tab || !doneTabs.has(tab.id)) return;
+  doneTabs.clear(tab.id);
   renderTabs();
   renderSessions();
   updateWindowTitle();
@@ -2243,9 +2247,8 @@ function clearAgentSession(tabId: string): void {
 
 /** A `muis-notify` request forwarded by the shell, routed to its tab. */
 function handleNotifyRequest(req: CliNotify): void {
-  if (!req?.tab_id) return;
-  const ws = store.workspaces.find((w) => w.tabs.some((t) => t.id === req.tab_id));
-  const tab = ws?.tabs.find((t) => t.id === req.tab_id);
+  if (!req?.tab_id && !req?.session) return;
+  const tab = tabForReport(store.workspaces, req.tab_id, req.session);
   if (!tab) return;
   if (applyNotification(tab, notifyEventFromCli(req))) {
     renderTabs();
@@ -2500,6 +2503,13 @@ async function restoreAgentTab(entry: RestoreEntry): Promise<void> {
   await delay(150);
   if (!views.has(tab.id)) return;
   await client.write(ws.id, tab.id, enc.encode(`${opencodeResume(id)}\n`)).catch(() => {});
+  // A resumed session is sitting at its prompt waiting for the user, exactly
+  // like a tab that just finished a turn: mark it as seen so the restored
+  // window still says where the work was left off.
+  doneTabs.mark(tab.id, "seen");
+  renderTabs();
+  renderSessions();
+  updateWindowTitle();
 }
 
 const restorePump = new RestorePump({
