@@ -13,6 +13,7 @@ mod bridge;
 mod logging;
 mod persist;
 mod snor;
+mod snor_tools;
 
 use bridge::{EventSink, WorkerLaunch, WorkerPool, WORKER_EVENT};
 use muis_core::notify::ClientRequest;
@@ -547,6 +548,23 @@ fn snor_cancel(engine: tauri::State<'_, Arc<SnorEngine>>) {
     engine.cancel();
 }
 
+/* ---------------- Snor read-only workspace lookups ---------------- */
+
+#[tauri::command]
+fn snor_git_status(cwd: String) -> Result<String, String> {
+    snor_tools::git_status(Path::new(&cwd))
+}
+
+#[tauri::command]
+fn snor_list_docs(cwd: String) -> Result<Vec<String>, String> {
+    snor_tools::list_docs(Path::new(&cwd))
+}
+
+#[tauri::command]
+fn snor_read_doc(cwd: String, path: String) -> Result<String, String> {
+    snor_tools::read_doc(Path::new(&cwd), &path, snor_tools::MAX_DOC_BYTES)
+}
+
 /// NVIDIA + KWin explicit sync kills WebKitGTK's dmabuf fast path with
 /// "explicit sync is used, but no acquire point is set" (native Wayland
 /// only; XWayland never hits it). Fall back to shared-memory compositing
@@ -604,7 +622,10 @@ fn main() {
             snor_start,
             snor_stop,
             snor_send,
-            snor_cancel
+            snor_cancel,
+            snor_git_status,
+            snor_list_docs,
+            snor_read_doc
         ])
         .setup(|app| {
             log::info!(
