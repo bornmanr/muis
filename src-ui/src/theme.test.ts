@@ -46,8 +46,17 @@ describe("muis theme", () => {
       "dracula",
       "catppuccin",
       "nord",
+      "veldmuis",
+      "orng",
     ]);
     expect(THEMES.nord.accent).toBe("#88c0d0");
+  });
+
+  it("matches the Veldmuis branding and OpenCode orng accents", () => {
+    expect(THEMES.veldmuis.accent).toBe("#f0b030");
+    expect(THEMES.veldmuis.accent2).toBe("#e08040");
+    expect(THEMES.orng.accent).toBe("#ec5b2b");
+    expect(THEMES.orng.accent2).toBe("#ee7948");
   });
 
   it("recolors xterm accents only for non-default themes", () => {

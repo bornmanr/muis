@@ -243,7 +243,7 @@ describe("muis chrome", () => {
     assert.ok(boxes.length >= 1);
     const themes = await overlay.findElements(By.css("select"));
     assert.ok(themes.length >= 1);
-    assert.equal((await themes[0].findElements(By.css("option"))).length, 6);
+    assert.equal((await themes[0].findElements(By.css("option"))).length, 8);
     await boxes[0].click(); // uncheck
     await overlay.findElement(By.xpath('.//button[text()="Save"]')).click();
     await driver.wait(async () => !(await driver.findElement(By.css(".sidebar")).isDisplayed()), 5000);

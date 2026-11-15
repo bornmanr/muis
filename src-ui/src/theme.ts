@@ -127,6 +127,20 @@ export const THEMES: Record<string, ThemeSpec> = {
     green: "#a3be8c",
     promptPath: "#a3be8c",
   },
+  /** Veldmuis Dawn wallpaper + KDE accent (240,176,48). */
+  veldmuis: {
+    accent: "#f0b030",
+    accent2: "#e08040",
+    green: "#b8bb26",
+    promptPath: "#f0b030",
+  },
+  /** OpenCode's built-in `orng` palette (#EC5B2B). */
+  orng: {
+    accent: "#ec5b2b",
+    accent2: "#ee7948",
+    green: "#7fd88f",
+    promptPath: "#e5c07b",
+  },
 };
 
 export function themeNames(): string[] {
