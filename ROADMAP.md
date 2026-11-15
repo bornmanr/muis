@@ -51,6 +51,8 @@ Legend: `[x]` settled+locked · `[~]` decided, needs test · `[ ]` open.
       per workspace width, supervised `llama-server` child (lazy start,
       loopback + per-launch key, `/health`), streamed chat with stop,
       explicit terminal context, and settings for model/server paths
+- [x] Snor conversations persist per workspace (`snor.json`); attached
+      terminal context is never written to disk
 
 ## To build (in suggested order)
 

@@ -6,6 +6,80 @@
  * Nothing here touches the network or the filesystem.
  */
 
+/** One conversation turn. `context` is the attached terminal context. */
+export interface SnorTurn {
+  role: "user" | "assistant";
+  text: string;
+  /** Never written to disk; re-attached explicitly on the next prompt. */
+  context?: string;
+}
+
+export interface SnorHistory {
+  conversations: Record<string, SnorTurn[]>;
+}
+
+export const SNOR_HISTORY_VERSION = 1;
+export const SNOR_MAX_SAVED_TURNS = 60;
+export const SNOR_MAX_SAVED_TEXT = 20000;
+
+/**
+ * Parse the on-disk conversation file. Junk fields are dropped, not
+ * fatal: a corrupt file starts with empty conversations. Attached
+ * context is deliberately not restored.
+ */
+export function parseSnorHistory(json: string): SnorHistory {
+  if (!json.trim()) return { conversations: {} };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return { conversations: {} };
+  }
+  if (typeof raw !== "object" || raw === null) return { conversations: {} };
+  const source = (raw as { conversations?: unknown }).conversations;
+  if (typeof source !== "object" || source === null || Array.isArray(source)) {
+    return { conversations: {} };
+  }
+  const conversations: Record<string, SnorTurn[]> = {};
+  for (const [id, value] of Object.entries(source as Record<string, unknown>)) {
+    if (!id || !Array.isArray(value)) continue;
+    const turns: SnorTurn[] = [];
+    for (const item of value) {
+      if (typeof item !== "object" || item === null) continue;
+      const r = item as Record<string, unknown>;
+      if (r.role !== "user" && r.role !== "assistant") continue;
+      if (typeof r.text !== "string") continue;
+      const text = r.text.slice(0, SNOR_MAX_SAVED_TEXT);
+      if (r.role === "assistant" && !text.trim()) continue;
+      turns.push({ role: r.role, text });
+    }
+    if (turns.length > 0) conversations[id] = turns.slice(-SNOR_MAX_SAVED_TURNS);
+  }
+  return { conversations };
+}
+
+/**
+ * Serialize conversations for disk. The attached terminal context is
+ * dropped so scrollback (which routinely contains secrets) never lands
+ * in the state file; empty assistant placeholders are dropped too.
+ */
+export function serializeSnorHistory(
+  conversations: Iterable<[string, SnorTurn[]]>,
+): string {
+  const out: Record<string, { role: string; text: string }[]> = {};
+  for (const [id, turns] of conversations) {
+    const saved = turns
+      .filter((turn) => turn.text.trim() || turn.role === "user")
+      .map((turn) => ({
+        role: turn.role,
+        text: turn.text.slice(0, SNOR_MAX_SAVED_TEXT),
+      }))
+      .slice(-SNOR_MAX_SAVED_TURNS);
+    if (saved.length > 0) out[id] = saved;
+  }
+  return JSON.stringify({ version: SNOR_HISTORY_VERSION, conversations: out });
+}
+
 export interface SnorContextInput {
   tabTitle?: string;
   cwd?: string;

@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   SNOR_MAX_CONTEXT_CHARS,
+  SNOR_MAX_SAVED_TURNS,
   buildSnorContext,
   scrubSecrets,
+  parseSnorHistory,
+  serializeSnorHistory,
   snorModelName,
   snorPrompt,
   snorStateLabel,
   tailLines,
+  type SnorTurn,
 } from "./snor";
 
 describe("snor context", () => {
@@ -80,6 +84,53 @@ describe("snor secrets", () => {
     };
     expect(buildSnorContext(input).text).toContain("hunter2");
     expect(buildSnorContext({ ...input, scrub: true }).text).not.toContain("hunter2");
+  });
+});
+
+describe("snor history", () => {
+  it("saves prompts and answers but never terminal context", () => {
+    const turns: SnorTurn[] = [
+      { role: "user", text: "why?", context: "secret scrollback" },
+      { role: "assistant", text: "because" },
+    ];
+    const json = serializeSnorHistory([["w1", turns]]);
+    expect(json).not.toContain("secret scrollback");
+    expect(json).not.toContain("context");
+    expect(parseSnorHistory(json)).toEqual({
+      conversations: {
+        w1: [
+          { role: "user", text: "why?" },
+          { role: "assistant", text: "because" },
+        ],
+      },
+    });
+  });
+
+  it("drops empty assistant placeholders, empty conversations, and junk", () => {
+    const json = serializeSnorHistory([
+      ["a", [{ role: "user", text: "hi" }, { role: "assistant", text: "  " }]],
+      ["b", [{ role: "assistant", text: "" }]],
+    ]);
+    expect(parseSnorHistory(json).conversations).toEqual({ a: [{ role: "user", text: "hi" }] });
+    expect(parseSnorHistory("not json")).toEqual({ conversations: {} });
+    expect(parseSnorHistory("")).toEqual({ conversations: {} });
+    expect(parseSnorHistory('{"conversations":[]}')).toEqual({ conversations: {} });
+    expect(
+      parseSnorHistory(
+        '{"conversations":{"w":[{"role":"system","text":"x"},{"role":"user","text":5},{"role":"assistant","text":"ok"}]}}',
+      ).conversations,
+    ).toEqual({ w: [{ role: "assistant", text: "ok" }] });
+    expect(parseSnorHistory('{"conversations":{"w":"nope"}}')).toEqual({ conversations: {} });
+  });
+
+  it("caps long conversations to the newest turns", () => {
+    const turns: SnorTurn[] = Array.from({ length: SNOR_MAX_SAVED_TURNS + 10 }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      text: `t${i}`,
+    }));
+    const saved = parseSnorHistory(serializeSnorHistory([["w", turns]])).conversations.w;
+    expect(saved).toHaveLength(SNOR_MAX_SAVED_TURNS);
+    expect(saved[saved.length - 1].text).toBe(`t${turns.length - 1}`);
   });
 });
 
