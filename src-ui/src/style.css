@@ -294,3 +294,43 @@ body{
 /* ---------- danger button ---------- */
 .btn.danger{border-color:var(--red); color:var(--red)}
 .btn.danger:hover{background:var(--red); color:#fff; border-color:var(--red)}
+
+/* ---------- side panel dock + Snor ---------- */
+.sidepanel{width:380px; min-width:280px; flex:0 0 auto; position:relative}
+.sidepanel-grip{position:absolute; left:-3px; top:0; bottom:0; width:6px; cursor:col-resize; z-index:5}
+.sidepanel-grip:hover{background:rgba(61,174,233,.25)}
+.newtab.snor-orb{color:var(--dim); opacity:.5}
+.newtab.snor-orb svg{display:block; fill:currentColor}
+.newtab.snor-orb:hover{opacity:1}
+.newtab.snor-orb[data-state="starting"]{color:var(--accent); opacity:.8; animation:snor-pulse 1.2s ease-in-out infinite}
+.newtab.snor-orb[data-state="ready"]{color:var(--accent); opacity:1}
+.newtab.snor-orb[data-state="streaming"]{color:var(--accent); opacity:1; filter:drop-shadow(0 0 4px var(--accent))}
+.newtab.snor-orb[data-state="error"]{color:var(--red); opacity:1}
+@keyframes snor-pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.snor{display:flex; flex-direction:column; gap:8px; height:100%; font-size:12px; box-sizing:border-box}
+.snor-status{display:flex; align-items:center; gap:6px; flex-wrap:wrap; color:var(--dim)}
+.snor-dot{width:7px; height:7px; border-radius:50%; background:#6b7378}
+.snor-dot.ready{background:#9ece6a}
+.snor-dot.starting,.snor-dot.streaming{background:#e0af68}
+.snor-dot.error{background:#f7768e}
+.snor-model{margin-left:auto; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:55%}
+.snor-error{flex-basis:100%; color:var(--red); line-height:1.35}
+.snor-config:empty{display:none}
+.snor-hint{color:var(--dim); margin-bottom:6px; line-height:1.4}
+.snor-log{flex:1; min-height:120px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; border-top:1px solid rgba(255,255,255,.06); border-bottom:1px solid rgba(255,255,255,.06); padding:8px 0}
+.snor-role{font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin-bottom:2px}
+.snor-msg.user .snor-text{opacity:.85}
+.snor-text{white-space:pre-wrap; word-break:break-word; line-height:1.45}
+.snor-chips{display:flex; flex-wrap:wrap; gap:4px; align-items:center}
+.snor-chips-label{font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim)}
+.snor-chip{background:#232629; border:1px solid var(--border-dark); border-radius:999px; color:var(--dim); font-size:11px; padding:2px 8px}
+button.snor-chip{cursor:pointer}
+button.snor-chip:hover{border-color:var(--accent); color:var(--accent)}
+.snor-input{background:#232629; border:1px solid var(--border-dark); border-radius:4px; color:var(--fg); font:inherit; padding:8px; resize:vertical}
+.snor-input:focus{outline:none; border-color:var(--accent)}
+.snor-actions{display:flex; gap:6px; flex-wrap:wrap}
+.snor-actions .btn{padding:5px 10px; flex:0 0 auto}
+.settings-inline{display:flex; gap:6px; align-items:center; flex:1}
+.settings-inline input{flex:1}
+.snor-payload-box{display:flex; flex-direction:column; gap:4px; align-items:flex-start}
+.snor-payload{width:100%; max-height:180px; overflow:auto; box-sizing:border-box; background:#232629; border:1px solid var(--border-dark); border-radius:4px; padding:6px; margin:0; font:11px var(--mono,monospace); white-space:pre-wrap; color:var(--dim)}

@@ -3,12 +3,16 @@
  *
  * Panels are thin clients: they talk to worker/engine processes over
  * the same IPC patterns as terminals and never touch the network from
- * the UI process. The engine itself is still parked (see ROADMAP) —
- * this registry only reserves the docking contract.
+ * the UI process. A panel may provide a mount callback that receives
+ * the body element when the dock renders it.
  */
+export type PanelMount = (body: HTMLElement) => void;
+
 export interface SidePanelDef {
   id: string;
   title: string;
+  /** Called once per dock render; the panel owns the body contents. */
+  mount?: PanelMount;
 }
 
 export class SidePanelRegistry {

@@ -5,10 +5,11 @@ solid and the project is otherwise quiet.
 
 ## On hold until muis is 100% sorted
 
-- **Snor engine.** The side-panel slot API is already in place
-  (`SidePanelRegistry`: register/toggle/single-visible/unregister, see
-  `docs/archive/build-progress.md` Step 6). No panel code exists yet.
-  Plan: `docs/snor-plan.md`. Revisit once the terminal is done.
+- **Snor follow-ups.** The panel, supervisor, and streaming path are
+  implemented (`crates/muis-shell/src/snor.rs`, `src-ui/src/snor.ts`,
+  plan: `docs/snor-plan.md`). Still open: explicit model downloads with
+  checksum verification, conversation persistence across restarts,
+  read-only approval-gated tools, and the unload/idle policy.
 - **neofetch/fastfetch branding.** Add a fastfetch preset/logo for
   muis/Veldmuis. muis already exports `TERM_PROGRAM=muis` for spawned
   shells (`crates/muis-worker/src/main.rs`).

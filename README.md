@@ -68,6 +68,11 @@ cargo run -p muis-shell
   `muis-notify --body "done"` (targets the current tab via `MUIS_TAB_ID`).
   Off-screen tabs badge, and the OS toast fires while muis is unfocused.
   See `docs/archive/notifications.md`.
+- Local assistant: Ctrl+Shift+A (or the mouse icon next to the settings
+  gear, highlighted while the engine is loaded) opens the Snor panel.
+  Choose a GGUF model in settings; it needs `llama-server` (Arch:
+  `llama-cpp`). The model runs as a supervised loopback process and text
+  never leaves the machine. See `docs/snor-plan.md`.
 
 ## Tests
 

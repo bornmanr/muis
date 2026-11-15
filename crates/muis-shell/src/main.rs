@@ -12,9 +12,11 @@ use std::sync::Arc;
 mod bridge;
 mod logging;
 mod persist;
+mod snor;
 
 use bridge::{EventSink, WorkerLaunch, WorkerPool, WORKER_EVENT};
 use muis_core::notify::ClientRequest;
+use snor::{ChatRequest, SnorEngine, SnorStatus};
 use tauri::{Emitter, Manager};
 
 /// Locate the worker binary in `dir`. Prefers the plain `muis-worker`
@@ -474,6 +476,59 @@ fn worker_stop(pool: tauri::State<WorkerPool>, session_id: String) {
     pool.stop_session(&session_id);
 }
 
+/* ---------------- Snor: supervised local llama-server ---------------- */
+
+#[tauri::command]
+fn snor_status(engine: tauri::State<'_, Arc<SnorEngine>>) -> SnorStatus {
+    engine.status()
+}
+
+/// Whether a usable `llama-server` binary is on the machine. The panel
+/// uses this for its install hint instead of starting the engine.
+#[tauri::command]
+fn snor_server_available(server_path: Option<String>) -> bool {
+    SnorEngine::find_server(server_path.as_deref()).is_some()
+}
+
+#[tauri::command]
+async fn snor_start(
+    engine: tauri::State<'_, Arc<SnorEngine>>,
+    model_path: String,
+    ctx_size: u32,
+    gpu_layers: i32,
+    server_path: Option<String>,
+) -> Result<SnorStatus, String> {
+    // Model load can take seconds; keep the webview thread free.
+    let engine = Arc::clone(&engine);
+    tauri::async_runtime::spawn_blocking(move || {
+        engine.start(&model_path, ctx_size, gpu_layers, server_path.as_deref())
+    })
+    .await
+    .map_err(|e| format!("snor start task failed: {e}"))?
+}
+
+#[tauri::command]
+async fn snor_stop(engine: tauri::State<'_, Arc<SnorEngine>>) -> Result<(), String> {
+    let engine = Arc::clone(&engine);
+    tauri::async_runtime::spawn_blocking(move || engine.stop())
+        .await
+        .map_err(|e| format!("snor stop task failed: {e}"))
+}
+
+#[tauri::command]
+fn snor_send(
+    app: tauri::AppHandle,
+    engine: tauri::State<'_, Arc<SnorEngine>>,
+    request: ChatRequest,
+) -> Result<(), String> {
+    engine.send(app, request)
+}
+
+#[tauri::command]
+fn snor_cancel(engine: tauri::State<'_, Arc<SnorEngine>>) {
+    engine.cancel();
+}
+
 /// NVIDIA + KWin explicit sync kills WebKitGTK's dmabuf fast path with
 /// "explicit sync is used, but no acquire point is set" (native Wayland
 /// only; XWayland never hits it). Fall back to shared-memory compositing
@@ -523,7 +578,13 @@ fn main() {
             open_url,
             worker_spawn,
             worker_send,
-            worker_stop
+            worker_stop,
+            snor_status,
+            snor_server_available,
+            snor_start,
+            snor_stop,
+            snor_send,
+            snor_cancel
         ])
         .setup(|app| {
             log::info!(
@@ -551,6 +612,10 @@ fn main() {
             let sink: EventSink = Arc::new(move |event| handle.emit(WORKER_EVENT, &event).is_ok());
             app.handle().manage(WorkerPool::new(sink, launch));
 
+            // Snor stays unstarted until the panel asks for it; managing
+            // the engine here only gives the commands a place to live.
+            app.handle().manage(Arc::new(SnorEngine::new()));
+
             // Notification endpoint for `muis-notify` clients. One per-user
             // socket; each request is forwarded to the frontend, which routes
             // it to the originating tab. Best-effort: a failure here only
@@ -571,8 +636,14 @@ fn main() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("muis shell failed to start");
+        .build(tauri::generate_context!())
+        .expect("muis shell failed to start")
+        .run(|handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                // The engine holds a child process; kill it with the app.
+                handle.state::<Arc<SnorEngine>>().stop();
+            }
+        });
 }
 
 #[cfg(test)]

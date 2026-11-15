@@ -17,6 +17,18 @@ describe("AppConfig", () => {
       bell: "none",
       statusbar: {},
       workspaceThemes: {},
+      snor: {
+        modelPath: null,
+        serverPath: null,
+        contextSize: 8192,
+        gpuLayers: 99,
+        temperature: 0.2,
+        contextLines: 0,
+        scrubSecrets: false,
+        systemPrompt:
+          "Answer only from the supplied context. If it is not there, say you do not know.",
+        panelWidth: 380,
+      },
     });
     expect(configFromJSON("")).toEqual(defaultConfig());
   });
@@ -26,6 +38,31 @@ describe("AppConfig", () => {
     expect(themeForWorkspace(cfg, "dev")).toBe("dracula");
     expect(themeForWorkspace(cfg, "other")).toBe("nord");
     expect(configFromJSON('{"workspaceThemes":{"x":5}}').workspaceThemes).toEqual({});
+  });
+
+  it("parses and clamps Snor settings", () => {
+    const cfg = configFromJSON(
+      JSON.stringify({
+        snor: {
+          modelPath: "  /models/qwen.gguf ",
+          serverPath: "",
+          contextSize: 10,
+          gpuLayers: -4,
+          temperature: 3,
+          contextLines: 9000,
+          panelWidth: 10,
+        },
+      }),
+    );
+    expect(cfg.snor.modelPath).toBe("/models/qwen.gguf");
+    expect(cfg.snor.serverPath).toBe(null);
+    expect(cfg.snor.contextSize).toBe(512);
+    expect(cfg.snor.gpuLayers).toBe(0);
+    expect(cfg.snor.temperature).toBe(0.2);
+    expect(cfg.snor.contextLines).toBe(5000);
+    expect(cfg.snor.panelWidth).toBe(280);
+    // A junk section keeps the defaults instead of throwing.
+    expect(configFromJSON('{"snor":"nope"}').snor).toEqual(defaultConfig().snor);
   });
 
   it("reads statusbar visibility (absent = shown)", () => {
@@ -91,6 +128,17 @@ describe("AppConfig", () => {
       bell: "both",
       statusbar: { clock: false },
       workspaceThemes: { dev: "nord" },
+      snor: {
+        modelPath: "/models/qwen.gguf",
+        serverPath: "/usr/bin/llama-server",
+        contextSize: 4096,
+        gpuLayers: 32,
+        temperature: 0.7,
+        contextLines: 200,
+        scrubSecrets: true,
+        systemPrompt: "stay short",
+        panelWidth: 420,
+      },
     };
     expect(configFromJSON(JSON.stringify(cfg))).toEqual(cfg);
   });

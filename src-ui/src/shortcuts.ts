@@ -11,6 +11,7 @@ export type ShortcutAction =
   | { type: "focus-terminal" }
   | { type: "open-settings" }
   | { type: "command-palette" }
+  | { type: "toggle-snor" }
   | { type: "switch-tab"; index: number }
   | { type: "cycle-tab"; delta: number }
   | { type: "cycle-session"; delta: number }
@@ -33,6 +34,7 @@ const SIMPLE_ACTIONS = new Set([
   "focus-terminal",
   "open-settings",
   "command-palette",
+  "toggle-snor",
   "close-overlay",
 ]);
 
@@ -76,6 +78,7 @@ export function resolveShortcut(e: KeyLike, overrides?: Record<string, string>):
   if (ctrlShift && key === "F12") return { type: "focus-terminal" };
   if (plainCtrl && key === ",") return { type: "open-settings" };
   if (ctrlShift && lower === "p") return { type: "command-palette" };
+  if (ctrlShift && lower === "a") return { type: "toggle-snor" };
 
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
     const m = /^(?:Digit)?([1-9])$/.exec(e.code ?? "");
