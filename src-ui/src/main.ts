@@ -2188,7 +2188,7 @@ function forgetTabState(tabId: string): void {
 
 /**
  * Surface one notification from a tab. Returns true when the chrome
- * changed (tab badged done) so callers can re-render.
+ * changed (the tab got a waiting mark) so callers can re-render.
  */
 function applyNotification(tab: Tab, ev: NotifyEvent): boolean {
   reportDebugStage("notify-received", { source: ev.source });
@@ -2201,14 +2201,14 @@ function applyNotification(tab: Tab, ev: NotifyEvent): boolean {
   if (!decision) return false;
   reportDebugStage("notify-routed", {
     source: ev.source,
-    markDone: decision.markDone,
+    attention: decision.attention,
     toast: decision.toast,
   });
   if (decision.toast) {
     void sendDesktopNotification(ev.title ?? tab.title ?? "muis", ev.body);
   }
-  if (!decision.markDone) return false;
-  doneTabs.mark(tab.id);
+  if (!decision.attention) return false;
+  doneTabs.mark(tab.id, decision.attention);
   return true;
 }
 

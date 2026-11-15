@@ -14,9 +14,13 @@ export type AlertState = "unseen" | "seen";
 export class DoneTracker {
   private alerts = new Map<string, AlertState>();
 
-  /** A completion arrived for a tab the user was not looking at. */
-  mark(id: string): void {
-    this.alerts.set(id, "unseen");
+  /**
+   * A completion arrived. `unseen` (the default) blinks until the tab is
+   * looked at; `seen` is for one that landed in a tab the user was already
+   * watching, which is lit but no longer new.
+   */
+  mark(id: string, state: AlertState = "unseen"): void {
+    this.alerts.set(id, state);
   }
 
   /** The user looked at the tab: keep the alert, but stop shouting. */
