@@ -70,7 +70,8 @@ cargo run -p muis-shell
   See `docs/archive/notifications.md`.
 - Local assistant: Ctrl+Shift+A (or the mouse icon next to the settings
   gear, highlighted while the engine is loaded) opens the Snor panel.
-  Choose a GGUF model in settings; it needs `llama-server` (Arch:
+  Choose a GGUF model in settings (download one of the three verified
+  presets, or browse to your own); it needs `llama-server` (Arch:
   `llama-cpp`). The model runs as a supervised loopback process and text
   never leaves the machine. Explicit read-only lookups: `/git`,
   `/docs`, and `/file <path>` (workspace-scoped). See

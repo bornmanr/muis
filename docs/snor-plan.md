@@ -28,6 +28,9 @@ covers the architecture, a phased build, and the decisions still open.
 - Read-only lookups: `/git`, `/docs`, and `/file <path>` are resolved
   by the shell inside the workspace. The model cannot choose a path,
   and nothing can write.
+- Models: settings lists three Apache-2.0 Q4_K_M presets and downloads
+  one only on request, with resume and sha256 verification, into
+  `~/.local/share/muis/models/`. Browse still accepts any GGUF.
 - The slot: `SidePanelRegistry` (`src-ui/src/panels.ts`) with the docked
   right-side host in `src-ui/src/main.ts`; the dock now lives in the
   `.main` row and panels provide a mount callback.

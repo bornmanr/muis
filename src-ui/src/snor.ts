@@ -196,3 +196,16 @@ export function snorStateLabel(state: string | undefined): string {
   if (!state) return STATE_LABELS.stopped;
   return STATE_LABELS[state] ?? state;
 }
+
+/** Compact byte size for the model catalog. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(unit >= 1 ? 2 : 0)} ${units[unit]}`;
+}

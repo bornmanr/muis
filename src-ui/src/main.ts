@@ -14,7 +14,7 @@ import { QueryHistory } from "./history";
 import { WorkerClient, type Transport } from "./worker";
 import { SearchController } from "./search";
 import { SidePanelRegistry } from "./panels";
-import { buildSnorContext, parseSnorHistory, parseSnorSlash, scrubSecrets, serializeSnorHistory, snorModelName, snorPrompt, snorStateLabel, type SnorTurn } from "./snor";
+import { buildSnorContext, formatBytes, parseSnorHistory, parseSnorSlash, scrubSecrets, serializeSnorHistory, snorModelName, snorPrompt, snorStateLabel, type SnorTurn } from "./snor";
 import { newActivityState, isTabBusy, anyTabBusy, forgetTab } from "./activity";
 import { OscParser, type NotifyEvent } from "./osc";
 import { CommandTracker, tabLabel as tabLabelOf } from "./commandbar";
@@ -2247,6 +2247,112 @@ optSnorLines.title = "Trailing scrollback lines attached to each prompt";
 const optSnorScrub = document.createElement("input");
 optSnorScrub.type = "checkbox";
 optSnorScrub.title = "Mask likely secrets in attached context";
+
+interface SnorModelInfo {
+  id: string;
+  label: string;
+  file: string;
+  size: number;
+  sha256: string;
+  license: string;
+  installed: boolean;
+  partial: number;
+  path: string;
+}
+
+interface SnorModelEvent {
+  id: string;
+  phase: "downloading" | "done" | "error";
+  received: number;
+  total: number;
+  path: string | null;
+  error: string | null;
+}
+
+const snorModelsBox = document.createElement("div");
+snorModelsBox.className = "snor-models";
+let snorModelInfos: SnorModelInfo[] = [];
+const snorModelProgress = new Map<string, { received: number; total: number }>();
+
+async function loadSnorModels(): Promise<void> {
+  if (!IN_TAURI) return;
+  try {
+    snorModelInfos = await invoke<SnorModelInfo[]>("snor_models");
+  } catch {
+    snorModelInfos = [];
+  }
+  renderSnorModels();
+}
+
+function renderSnorModels(): void {
+  snorModelsBox.textContent = "";
+  if (snorModelInfos.length === 0) {
+    snorModelsBox.append(el("div", "snor-hint", "Model catalog unavailable."));
+    return;
+  }
+  for (const model of snorModelInfos) {
+    const row = el("div", "snor-model-row");
+    const info = el("div", "snor-model-info");
+    info.append(
+      el("div", "snor-model-name", model.label),
+      el("div", "snor-model-meta", `${formatBytes(model.size)} · ${model.license}`),
+    );
+    row.append(info);
+    const progress = snorModelProgress.get(model.id);
+    if (progress) {
+      const pct = progress.total > 0 ? Math.round((progress.received / progress.total) * 100) : 0;
+      row.append(el("span", "snor-model-progress", `${pct}%`));
+    } else if (model.installed) {
+      const use = el("button", "btn", "Use") as HTMLButtonElement;
+      use.addEventListener("click", () => {
+        optSnorModel.value = model.path;
+        cfg = { ...cfg, snor: { ...cfg.snor, modelPath: model.path } };
+        void persistConfig();
+      });
+      const remove = el("button", "btn danger", "Delete") as HTMLButtonElement;
+      remove.addEventListener("click", () => {
+        void invoke("snor_model_delete", { id: model.id })
+          .then(() => loadSnorModels())
+          .catch(() => loadSnorModels());
+      });
+      row.append(use, remove);
+    } else {
+      const download = el("button", "btn", model.partial > 0 ? "Resume" : "Download") as HTMLButtonElement;
+      download.addEventListener("click", () => {
+        snorModelProgress.set(model.id, { received: model.partial, total: model.size });
+        renderSnorModels();
+        void invoke("snor_model_download", { id: model.id }).catch(() => {
+          snorModelProgress.delete(model.id);
+          renderSnorModels();
+        });
+      });
+      row.append(download);
+    }
+    snorModelsBox.append(row);
+  }
+}
+
+if (IN_TAURI) {
+  void listen<SnorModelEvent>("snor-model", (event) => {
+    const update = event.payload;
+    if (update.phase === "downloading") {
+      snorModelProgress.set(update.id, {
+        received: update.received,
+        total: update.total,
+      });
+      renderSnorModels();
+      return;
+    }
+    snorModelProgress.delete(update.id);
+    if (update.phase === "done" && update.path) {
+      optSnorModel.value = update.path;
+      cfg = { ...cfg, snor: { ...cfg.snor, modelPath: update.path } };
+      void persistConfig();
+      renderSnor();
+    }
+    void loadSnorModels();
+  });
+}
 const SEGMENTS: [string, string][] = [
   ["cwd", "cwd"],
   ["git", "git"],
@@ -2292,6 +2398,7 @@ settingsBody.append(
   ]),
   settingsSection("Snor (local assistant)", [
     settingsRow("Model (.gguf)", snorModelRow),
+    settingsBlock("Model catalog", snorModelsBox),
     settingsRow("llama-server", optSnorServer),
     settingsRow("Context size", optSnorContext),
     settingsRow("GPU layers", optSnorGpu),
@@ -2317,6 +2424,7 @@ function openSettings(): void {
   optSnorGpu.value = cfg.snor.gpuLayers.toString();
   optSnorLines.value = cfg.snor.contextLines.toString();
   optSnorScrub.checked = cfg.snor.scrubSecrets;
+  void loadSnorModels();
   for (const [id, cb] of Object.entries(segOpts)) {
     cb.checked = segmentVisible(cfg.statusbar, id);
   }
