@@ -39,8 +39,8 @@ export interface NotifyContext {
 }
 
 export interface NotifyDecision {
-  /** Badge the originating tab because the user was not looking at it. */
-  markDone: boolean;
+  /** Mark to apply to the originating tab, or null when nothing should be. */
+  attention: "unseen" | "seen" | null;
   /** Raise a desktop notification because the window is not focused. */
   toast: boolean;
 }
@@ -61,7 +61,15 @@ export class NotifyRouter {
     const prev = this.last.get(tabId);
     if (prev && prev.key === key && now - prev.at < this.dedupeMs) return null;
     this.last.set(tabId, { key, at: now });
-    return { markDone: !ctx.visible, toast: !ctx.windowFocused };
+    // A tab the user is watching still needs an answer, so it is marked as
+    // seen: the tab stays lit until the agent resumes. A finished *command*
+    // the user watched is already handled; only a background one is flagged.
+    const attention = ctx.visible
+      ? ev.source === "command"
+        ? null
+        : "seen"
+      : "unseen";
+    return { attention, toast: !ctx.windowFocused };
   }
 
   forget(tabId: string): void {

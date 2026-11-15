@@ -23,10 +23,19 @@ const ctx = (over: Partial<NotifyContext> = {}): NotifyContext => ({
 });
 
 describe("NotifyRouter", () => {
-  it("badges a tab only when it is not visible", () => {
+  it("marks a hidden tab unseen and a watched one as seen", () => {
     const r = new NotifyRouter();
-    expect(r.route("t1", osc9("done"), ctx({ visible: false }), 0)?.markDone).toBe(true);
-    expect(r.route("t1", osc9("done"), ctx({ visible: true }), 10_000)?.markDone).toBe(false);
+    expect(r.route("t1", osc9("done"), ctx({ visible: false }), 0)?.attention).toBe("unseen");
+    // The user is looking at the tab: the agent still waits for an answer,
+    // so the tab gets a lit mark instead of a blinking one.
+    expect(r.route("t1", osc9("done"), ctx({ visible: true }), 10_000)?.attention).toBe("seen");
+  });
+
+  it("does not mark a finished command the user watched", () => {
+    const r = new NotifyRouter();
+    const finished = notifyEventFromCommand("Build", "build finished");
+    expect(r.route("t1", finished, ctx({ visible: true }), 0)?.attention).toBeNull();
+    expect(r.route("t1", finished, ctx({ visible: false }), 10_000)?.attention).toBe("unseen");
   });
 
   it("toasts only while the window is unfocused", () => {

@@ -34,6 +34,13 @@ describe("DoneTracker", () => {
     expect(d.count()).toBe(1);
   });
 
+  it("marks a completion that landed in a watched tab as already seen", () => {
+    const d = new DoneTracker();
+    d.mark("a", "seen");
+    expect(d.has("a")).toBe(true);
+    expect(d.isUnseen("a")).toBe(false);
+  });
+
   it("a seen alert becomes unseen again on a new completion", () => {
     const d = new DoneTracker();
     d.mark("a");
