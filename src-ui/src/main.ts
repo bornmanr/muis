@@ -780,13 +780,17 @@ function observeOsc(sessionId: string, tab: Tab, data: Uint8Array): void {
       const st = commandTracker.state(tabNow.id);
       const cmd = ev.cmd || st.input.trim() || currentInputLine(tabNow.id);
       commandTracker.onCmdStart(tabNow.id, cmd);
-      // A new command means the previous completion is handled — except the
-      // resume line muis typed itself, which is the tab picking its session
-      // back up, not the user starting new work.
+      reportDebugStage("cmd-start", { tab: tabNow.id, cmd });
+      // A new command means the previous completion is handled — unless the
+      // tab is owned by an agent. There the mark belongs to the agent and only
+      // a reply (`muis-notify --running`) or closing the tab may drop it: the
+      // resume line muis types during restore, and the prompt text some shells
+      // report as a command start, must not.
       if (isInjectedResume(restoreCommands.get(tabNow.id), cmd)) {
         restoreCommands.delete(tabNow.id);
-      } else if (doneTabs.has(tabNow.id)) {
+      } else if (doneTabs.has(tabNow.id) && !tabNow.agentSession) {
         doneTabs.clear(tabNow.id);
+        reportDebugStage("attention-cleared", { tab: tabNow.id, reason: "command" });
         changed = true;
       }
       renderCommandHead(tabNow.id);
@@ -2219,6 +2223,11 @@ function applyNotification(tab: Tab, ev: NotifyEvent): boolean {
   }
   if (!decision.attention) return false;
   doneTabs.mark(tab.id, decision.attention);
+  reportDebugStage("attention-marked", {
+    tab: tab.id,
+    state: decision.attention,
+    reason: "notification",
+  });
   return true;
 }
 
@@ -2241,6 +2250,7 @@ function handleAgentActivity(req: CliAgentActivity): void {
   const tab = tabForReport(store.workspaces, req.tab_id, req.session);
   if (!tab || !doneTabs.has(tab.id)) return;
   doneTabs.clear(tab.id);
+  reportDebugStage("attention-cleared", { tab: tab.id, reason: "resumed" });
   renderTabs();
   renderSessions();
   updateWindowTitle();
@@ -2517,6 +2527,7 @@ async function restoreAgentTab(entry: RestoreEntry): Promise<void> {
   // like a tab that just finished a turn: mark it as seen so the restored
   // window still says where the work was left off.
   doneTabs.mark(tab.id, "seen");
+  reportDebugStage("attention-marked", { tab: tab.id, state: "seen", reason: "restore" });
   renderTabs();
   renderSessions();
   updateWindowTitle();

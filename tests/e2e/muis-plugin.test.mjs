@@ -250,3 +250,69 @@ test("unrelated events are ignored", () => {
   plugin.event(undefined);
   assert.deepEqual(calls, []);
 });
+
+test("alert contract: every alert is session-routed and every reply clears", () => {
+  // One table for the whole contract. If opencode renames or drops an event,
+  // this test has to change with it — that is the point: the pipeline fails
+  // instead of the alert silently disappearing.
+  const cases = [
+    {
+      name: "turn finished",
+      event: { type: "session.execution.succeeded", data: { sessionID: "ses_c" } },
+      want: /--body Project has finished --session ses_c/,
+    },
+    {
+      name: "turn failed",
+      event: { type: "session.execution.failed", data: { sessionID: "ses_c" } },
+      want: /--body Project failed --session ses_c/,
+    },
+    {
+      name: "permission asked",
+      event: { type: "permission.asked", data: { sessionID: "ses_c", action: "bash" } },
+      want: /needs permission: bash --session ses_c/,
+    },
+    {
+      name: "form asked",
+      event: { type: "form.created", data: { form: { sessionID: "ses_c", title: "Pick" } } },
+      want: /is waiting for your input: Pick --session ses_c/,
+    },
+    {
+      name: "permission replied",
+      event: { type: "permission.replied", data: { sessionID: "ses_c" } },
+      want: /^notify --running --session ses_c$/,
+    },
+    {
+      name: "permission rejected",
+      event: { type: "permission.rejected", data: { sessionID: "ses_c" } },
+      want: /^notify --running --session ses_c$/,
+    },
+    {
+      name: "form replied",
+      event: { type: "form.replied", data: { sessionID: "ses_c" } },
+      want: /^notify --running --session ses_c$/,
+    },
+  ];
+
+  for (const c of cases) {
+    const { plugin, calls } = harness();
+    plugin.event(created("ses_c", { title: "Project", location: { directory: "/w/Project" } }));
+    calls.length = 0;
+    plugin.event(c.event);
+    assert.equal(calls.length, 1, `${c.name}: expected exactly one helper call`);
+    assert.match(calls[0], c.want, `${c.name}: unexpected helper call ${calls[0]}`);
+  }
+
+  // Every case must be subscribed, or opencode would never deliver it.
+  for (const c of cases) {
+    assert.ok(SESSION_EVENTS.includes(c.event.type), `${c.name}: not subscribed`);
+  }
+});
+
+test("a prompt reply clears the mark for its own session", () => {
+  const { plugin, calls } = harness();
+  plugin.prompt("ses_prompt");
+  assert.deepEqual(calls, [
+    "agent session ses_prompt",
+    "notify --running --session ses_prompt",
+  ]);
+});
