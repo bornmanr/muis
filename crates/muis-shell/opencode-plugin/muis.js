@@ -1,8 +1,13 @@
-// muis-plugin v7
+// muis-plugin v8
 // muis opencode server plugin: notify muis when a turn finishes or when
-// opencode pauses for input, so the tab gets the done badge + toast, and
+// opencode pauses for input, so the tab gets the waiting mark + toast, and
 // report the exact session id as a fallback when the TUI plugin is
 // unavailable.
+//
+// It also reports the other direction: `session.execution.started` and an
+// admitted prompt mean opencode picked the work back up, so muis clears the
+// tab's waiting mark. The mark therefore survives merely looking at the tab
+// and only goes when the user replies or the tab closes.
 //
 // Installed by muis at ~/.config/opencode/plugins/muis.js. opencode 2.x only
 // loads a plugin from that directory when the module default-exports a
@@ -29,6 +34,7 @@ export const SESSION_EVENTS = [
   "session.created",
   "session.renamed",
   "session.idle",
+  "session.execution.started",
   "session.execution.succeeded",
   "session.execution.failed",
   "form.created",
@@ -136,6 +142,13 @@ export function createMuisPlugin({ reportAgent, notify }) {
       const id = data.sessionID;
       if (typeof id !== "string") return;
 
+      // The turn resumed (the user replied, answered a question, or granted
+      // a permission): drop the waiting mark instead of raising an alert.
+      if (type === "session.execution.started") {
+        notify(["--running"]);
+        return;
+      }
+
       if (type === "session.created") {
         const directory = data.location?.directory ?? event.location?.directory ?? "";
         sessions.set(id, {
@@ -166,9 +179,14 @@ export function createMuisPlugin({ reportAgent, notify }) {
       notify(["--title", where.title, "--body", body]);
     },
 
-    /** Prompt admission hook: report the session about to receive a turn. */
+    /**
+     * Prompt admission hook: report the session about to receive a turn. The
+     * turn is running again, so the tab stops waiting — this also covers
+     * older opencode builds without `session.execution.started`.
+     */
     prompt(sessionID) {
       report(sessionID);
+      notify(["--running"]);
     },
   };
 }
