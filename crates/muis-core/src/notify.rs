@@ -19,6 +19,8 @@ use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions,
 use serde::{Deserialize, Serialize};
 
 pub const AGENT_KIND: &str = "agent-session";
+pub const ACTIVITY_KIND: &str = "agent-activity";
+pub const ACTIVITY_RUNNING: &str = "running";
 
 /// One notification request from a client.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +34,29 @@ pub struct NotifyRequest {
     /// 0 low, 1 normal, 2 critical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub urgency: Option<u8>,
+}
+
+/// What the agent in a tab is doing now. `running` means it picked the work
+/// back up — the user replied — so the tab's waiting mark can go without a
+/// new alert being raised.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityRequest {
+    pub kind: String,
+    /// Only `running` today; an unknown state is ignored by the shell.
+    pub state: String,
+    /// Originating tab, injected into ptys as `MUIS_TAB_ID`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+}
+
+impl ActivityRequest {
+    pub fn running(tab_id: Option<String>) -> Self {
+        Self {
+            kind: ACTIVITY_KIND.to_string(),
+            state: ACTIVITY_RUNNING.to_string(),
+            tab_id,
+        }
+    }
 }
 
 /// The terminal's currently open agent session. `session: None` means the
@@ -65,6 +90,7 @@ impl AgentSessionRequest {
 pub enum ClientRequest {
     Notify(NotifyRequest),
     AgentSession(AgentSessionRequest),
+    AgentActivity(ActivityRequest),
 }
 
 /// True for the only session ids muis will ever write to a shell.
@@ -116,18 +142,14 @@ where
 /// else is a notification (including old clients that never sent `kind`).
 pub fn decode_client(line: &str) -> Option<ClientRequest> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
-    let is_agent = value
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .is_some_and(|k| k == AGENT_KIND);
-    if is_agent {
-        serde_json::from_value(value)
+    match value.get("kind").and_then(|v| v.as_str()) {
+        Some(AGENT_KIND) => serde_json::from_value(value)
             .ok()
-            .map(ClientRequest::AgentSession)
-    } else {
-        serde_json::from_value(value)
+            .map(ClientRequest::AgentSession),
+        Some(ACTIVITY_KIND) => serde_json::from_value(value)
             .ok()
-            .map(ClientRequest::Notify)
+            .map(ClientRequest::AgentActivity),
+        _ => serde_json::from_value(value).ok().map(ClientRequest::Notify),
     }
 }
 
@@ -146,6 +168,11 @@ pub fn send(socket: &str, req: &NotifyRequest) -> io::Result<()> {
 
 /// Send one agent-session report to a running muis.
 pub fn send_agent(socket: &str, req: &AgentSessionRequest) -> io::Result<()> {
+    send_value(socket, &serde_json::to_value(req)?)
+}
+
+/// Send one agent-activity report to a running muis.
+pub fn send_activity(socket: &str, req: &ActivityRequest) -> io::Result<()> {
     send_value(socket, &serde_json::to_value(req)?)
 }
 
@@ -252,6 +279,32 @@ mod tests {
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(5)).unwrap(),
             ClientRequest::AgentSession(agent)
+        );
+
+        let running = ActivityRequest::running(Some("tab-1".into()));
+        send_activity(&socket, &running).unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            ClientRequest::AgentActivity(running)
+        );
+    }
+
+    #[test]
+    fn activity_reports_decode_by_kind_not_as_notifications() {
+        let running = ActivityRequest::running(Some("t2".into()));
+        let json = serde_json::to_string(&running).unwrap();
+        assert!(json.contains("agent-activity"));
+        assert_eq!(
+            decode_client(&json),
+            Some(ClientRequest::AgentActivity(running))
+        );
+
+        // A running report without a tab is still decodable; the shell drops
+        // it because it cannot say which tab resumed.
+        let bare = ActivityRequest::running(None);
+        assert_eq!(
+            decode_client(r#"{"kind":"agent-activity","state":"running"}"#),
+            Some(ClientRequest::AgentActivity(bare))
         );
     }
 }

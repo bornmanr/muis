@@ -38,6 +38,7 @@ test("default export is a V2 definition opencode can load", () => {
     "session.created",
     "session.renamed",
     "session.idle",
+    "session.execution.started",
     "session.execution.succeeded",
     "session.execution.failed",
     "form.created",
@@ -153,6 +154,30 @@ test("prompt reports the exact session for resume tracking", () => {
   assert.doesNotMatch(joined, /--title/);
 });
 
+test("prompt also clears the waiting mark", () => {
+  const { plugin, calls } = harness();
+  plugin.prompt("ses_exact2");
+  assert.match(calls.join("\n"), /notify --running/);
+});
+
+test("session.execution.started clears the waiting mark without alerting", () => {
+  const { plugin, calls } = harness();
+  plugin.event(created("ses_run", { title: "Long turn" }));
+  calls.length = 0;
+  plugin.event({ type: "session.execution.started", data: { sessionID: "ses_run" } });
+  assert.deepEqual(calls, ["notify --running"]);
+});
+
+test("a completion after a resume still raises an alert", () => {
+  const { plugin, calls } = harness();
+  plugin.event(created("ses_cycle", { title: "Cycle" }));
+  plugin.event({ type: "session.execution.started", data: { sessionID: "ses_cycle" } });
+  plugin.event({ type: "session.execution.succeeded", data: { sessionID: "ses_cycle" } });
+  const joined = calls.join("\n");
+  assert.match(joined, /notify --running/);
+  assert.match(joined, /--body Cycle has finished/);
+});
+
 test("session.created reports a new top-level session but not a subagent", () => {
   const { plugin, calls } = harness();
   plugin.event(created("ses_root"));
@@ -197,7 +222,7 @@ test("invalid session ids are never reported", () => {
 test("unrelated events are ignored", () => {
   const { plugin, calls } = harness();
   plugin.event({ type: "session.status", data: { sessionID: "ses_status" } });
-  plugin.event({ type: "session.execution.started", data: { sessionID: "ses_exec" } });
+  plugin.event({ type: "session.deleted", data: { sessionID: "ses_gone" } });
   plugin.event(undefined);
   assert.deepEqual(calls, []);
 });

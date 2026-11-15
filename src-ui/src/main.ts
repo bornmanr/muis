@@ -161,6 +161,13 @@ class EchoTransport implements Transport {
 let store = new SessionStore();
 const client = new WorkerClient(IN_TAURI ? new TauriTransport() : new EchoTransport());
 
+/** A `muis-agent-activity` report routed from the shell. */
+interface CliAgentActivity {
+  kind?: string;
+  state?: string;
+  tab_id?: string | null;
+}
+
 /** A `muis-agent session` report routed from the shell. */
 interface CliAgentSession {
   kind?: string;
@@ -211,6 +218,11 @@ if (IN_TAURI) {
     const w = window as unknown as { __muisErrors?: string[] };
     w.__muisErrors ??= [];
     w.__muisErrors.push(`agent-listen failed: ${String(e)}`);
+  });
+  void listen<CliAgentActivity>("muis-agent-activity", (e) => handleAgentActivity(e.payload)).catch((e: unknown) => {
+    const w = window as unknown as { __muisErrors?: string[] };
+    w.__muisErrors ??= [];
+    w.__muisErrors.push(`agent-activity-listen failed: ${String(e)}`);
   });
 }
 
@@ -696,14 +708,12 @@ function ensureView(sessionId: string, tab: Tab): TabView {
     })();
     term.onData((data) => {
       trackInput(tab.id, data);
-      acknowledgeAlert(tab.id);
       void client.write(sessionId, tab.id, enc.encode(data));
     });
   } else {
     term.writeln("browser preview — local echo only; run in the Tauri window for real ptys.");
     term.onData((data) => {
       trackInput(tab.id, data);
-      acknowledgeAlert(tab.id);
       term.write(data);
     });
   }
@@ -1397,10 +1407,12 @@ function tabElement(ws: Workspace, tab: Tab, selected: boolean): HTMLElement {
   dot.style.background = tcol;
   const title = el("span", "t-name", label);
   d.append(dot, title);
-  // A pending completion reads "waiting" — it wants the user, and stays
-  // green until they work in the tab. Only a dead pty reads "done".
-  const chip = tabAttentionLabel(tabAttention(tab.id), activity.exited.has(tab.id));
-  if (chip) d.append(el("span", "t-state", chip));
+  // A pending completion reads "waiting" — it wants the user. It blinks
+  // until the tab is looked at, then stays lit (green, no animation) until
+  // the agent resumes or the tab closes. Only a dead pty reads "done".
+  const attention = tabAttention(tab.id);
+  const chip = tabAttentionLabel(attention, activity.exited.has(tab.id));
+  if (chip) d.append(el("span", "t-state" + (attention === "unseen" ? " unseen" : ""), chip));
   const x = el("span", "x", "✕");
   x.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -2059,15 +2071,6 @@ function isTabVisible(tabId: string): boolean {
   return ws?.tabs[ws.active]?.id === tabId;
 }
 
-/** Typing in a visible tab means the completion it flagged is handled. */
-function acknowledgeAlert(tabId: string): void {
-  if (!doneTabs.has(tabId) || !isTabVisible(tabId)) return;
-  doneTabs.clear(tabId);
-  renderTabs();
-  renderSessions();
-  updateWindowTitle();
-}
-
 function renderCommandHead(tabId: string): void {
   const view = views.get(tabId);
   if (!view) return;
@@ -2215,6 +2218,20 @@ function handleAgentSession(req: CliAgentSession): void {
   if (applyAgentReport(store.workspaces, req.tab_id, req.session, req.directory) !== "ignored") {
     scheduleSave();
   }
+}
+
+/**
+ * The agent in a tab picked the work back up (opencode started a turn or the
+ * user's prompt was admitted), so the tab is no longer waiting. Looking at a
+ * tab does not clear the mark; replying does.
+ */
+function handleAgentActivity(req: CliAgentActivity): void {
+  if (!req?.tab_id || req.state !== "running") return;
+  if (!doneTabs.has(req.tab_id)) return;
+  doneTabs.clear(req.tab_id);
+  renderTabs();
+  renderSessions();
+  updateWindowTitle();
 }
 
 /** Forget a tab's agent session (opencode left the session or exited). */

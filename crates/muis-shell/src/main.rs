@@ -565,6 +565,9 @@ fn main() {
                 ClientRequest::AgentSession(req) => {
                     let _ = handle.emit("muis-agent-session", &req);
                 }
+                ClientRequest::AgentActivity(req) => {
+                    let _ = handle.emit("muis-agent-activity", &req);
+                }
             }) {
                 log::warn!("notification endpoint unavailable ({socket}): {e}");
             }

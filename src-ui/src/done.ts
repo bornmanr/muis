@@ -5,8 +5,9 @@
  * Two states keep the chrome calm: a fresh alert is `unseen` (the sidebar
  * counts and pulses it), and looking at the tab demotes it to `seen` (the
  * tab keeps a steady "waiting" mark and the sidebar only shows a dot). The
- * alert goes away when the user actually works in the tab — the next
- * command or keystroke — not when they merely glance at it.
+ * alert goes away when the work is picked back up — the agent reports that
+ * it is running again, or the next command starts — never because the user
+ * merely glanced at the tab.
  */
 export type AlertState = "unseen" | "seen";
 

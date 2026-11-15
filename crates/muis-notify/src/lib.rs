@@ -4,18 +4,24 @@
 //! `--notifications-command "muis-notify --title Aider --body 'ready'"`,
 //! a Claude Code `Notification` hook, or Codex's `notify = [...]`.
 //!
+//! `--running` is the other direction: it reports that the agent in this tab
+//! picked the work back up, so the tab's waiting mark goes without raising a
+//! new alert. opencode's plugin sends it when a turn starts.
+//!
 //! The target socket and tab default to the `MUIS_SOCKET` and `MUIS_TAB_ID`
 //! environment variables, which muis injects into every pty, so a plain
 //! `muis-notify --body "done"` from a shell inside muis just works.
 
-use muis_core::notify::{self, NotifyRequest};
+use muis_core::notify::{self, ActivityRequest, NotifyRequest};
 
 const USAGE: &str = "\
 usage: muis-notify --body TEXT [--title TEXT] [--tab ID] [--urgency 0|1|2] [--socket NAME]
+       muis-notify --running [--tab ID] [--socket NAME]
 
-Sends a desktop notification to a running muis window. Defaults for
---socket and --tab come from the MUIS_SOCKET and MUIS_TAB_ID environment
-variables, which muis sets inside its terminals.";
+Sends a desktop notification to a running muis window. --running instead
+reports that the agent resumed, which clears the tab's waiting mark.
+Defaults for --socket and --tab come from the MUIS_SOCKET and MUIS_TAB_ID
+environment variables, which muis sets inside its terminals.";
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Cli {
@@ -24,6 +30,7 @@ struct Cli {
     tab_id: Option<String>,
     urgency: Option<u8>,
     socket: Option<String>,
+    running: bool,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
@@ -36,6 +43,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
             "--body" => cli.body = Some(value()?),
             "--tab" => cli.tab_id = Some(value()?),
             "--socket" => cli.socket = Some(value()?),
+            "--running" => cli.running = true,
             "--urgency" => {
                 let urgency: u8 = value()?
                     .parse()
@@ -72,7 +80,7 @@ pub fn run() -> i32 {
             return 2;
         }
     };
-    if cli.body.is_none() {
+    if !cli.running && cli.body.is_none() {
         eprintln!("muis-notify: --body is required\n{USAGE}");
         return 2;
     }
@@ -81,14 +89,21 @@ pub fn run() -> i32 {
         .socket
         .or_else(|| std::env::var("MUIS_SOCKET").ok())
         .unwrap_or_else(notify::socket_name);
-    let req = NotifyRequest {
-        title: cli.title,
-        body: cli.body.unwrap_or_default(),
-        tab_id: cli.tab_id.or_else(|| std::env::var("MUIS_TAB_ID").ok()),
-        urgency: cli.urgency,
+    let tab_id = cli.tab_id.or_else(|| std::env::var("MUIS_TAB_ID").ok());
+
+    let sent = if cli.running {
+        notify::send_activity(&socket, &ActivityRequest::running(tab_id))
+    } else {
+        let req = NotifyRequest {
+            title: cli.title,
+            body: cli.body.unwrap_or_default(),
+            tab_id,
+            urgency: cli.urgency,
+        };
+        notify::send(&socket, &req)
     };
 
-    match notify::send(&socket, &req) {
+    match sent {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("muis-notify: could not reach muis (socket {socket}): {e}");
@@ -131,6 +146,7 @@ mod tests {
                 tab_id: Some("t1".into()),
                 urgency: Some(2),
                 socket: Some("s".into()),
+                running: false,
             }
         );
     }
@@ -140,6 +156,14 @@ mod tests {
         assert!(parse_args(args(&["--body"])).is_err());
         assert!(parse_args(args(&["--nope"])).is_err());
         assert!(parse_args(args(&["--body", "x", "--urgency", "9"])).is_err());
+    }
+
+    #[test]
+    fn running_needs_no_body() {
+        let cli = parse_args(args(&["--running", "--tab", "t1"])).unwrap();
+        assert!(cli.running);
+        assert_eq!(cli.tab_id.as_deref(), Some("t1"));
+        assert_eq!(cli.body, None);
     }
 
     #[test]
