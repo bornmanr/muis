@@ -57,6 +57,8 @@ Legend: `[x]` settled+locked · `[~]` decided, needs test · `[ ]` open.
       workspace-scoped; no model-chosen paths and no writes
 - [x] Snor model catalog: three verified presets download on request
       with resume and sha256 checks; weights are never bundled
+- [x] Snor `/todos` and `/sessions` read the opencode index pushed by
+      the muis plugin (`todo.updated` -> `muis-agent --todo-done/--todo-total`)
 
 ## To build (in suggested order)
 

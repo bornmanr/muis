@@ -42,6 +42,7 @@ test("default export is a V2 definition opencode can load", () => {
     "session.execution.failed",
     "form.created",
     "permission.asked",
+    "todo.updated",
   ]);
 });
 
@@ -126,6 +127,25 @@ test("permission.asked also reads the legacy permission field", () => {
   assert.equal(permissionOf({ permission: "  edit " }), "edit");
   assert.equal(permissionOf({ action: "bash" }), "bash");
   assert.equal(permissionOf({}), "");
+});
+
+test("todo.updated reports done/total with the session directory", () => {
+  const { plugin, calls } = harness();
+  plugin.event(created("ses_todo", { location: { directory: "/home/x/Projects/muis" } }));
+  plugin.event({
+    type: "todo.updated",
+    data: {
+      sessionID: "ses_todo",
+      todos: [
+        { content: "a", status: "completed", priority: "high" },
+        { content: "b", status: "in_progress", priority: "medium" },
+        { content: "c", status: "pending", priority: "low" },
+      ],
+    },
+  });
+  const joined = calls.join("\n");
+  assert.match(joined, /--todo-done 1 --todo-total 3/);
+  assert.match(joined, /--dir \/home\/x\/Projects\/muis/);
 });
 
 test("session.renamed updates the title used by the toast", () => {

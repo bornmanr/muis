@@ -9,14 +9,16 @@
 //! session for a clear), an optional directory, and the originating tab.
 //!
 //! ```text
-//! usage: muis-agent session <ses_ID> [--dir DIR] [--tab ID] [--socket NAME]
+//! usage: muis-agent session <ses_ID> [--dir DIR] [--todo-done N]
+//!                                [--todo-total N] [--tab ID] [--socket NAME]
 //!        muis-agent clear [--tab ID] [--socket NAME]
 //! ```
 
 use muis_core::notify::{self, AgentSessionRequest};
 
 const USAGE: &str = "\
-usage: muis-agent session <ses_ID> [--dir DIR] [--tab ID] [--socket NAME]
+usage: muis-agent session <ses_ID> [--dir DIR] [--todo-done N] [--todo-total N]
+                            [--tab ID] [--socket NAME]
        muis-agent clear [--tab ID] [--socket NAME]
 
 Reports the agent session currently open in a muis tab, so the tab can
@@ -29,6 +31,8 @@ struct Cli {
     directory: Option<String>,
     tab_id: Option<String>,
     socket: Option<String>,
+    todo_done: Option<u32>,
+    todo_total: Option<u32>,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
@@ -42,6 +46,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
             "--dir" => cli.directory = Some(value()?),
             "--tab" => cli.tab_id = Some(value()?),
             "--socket" => cli.socket = Some(value()?),
+            "--todo-done" => {
+                cli.todo_done = Some(value()?.parse().map_err(|_| "todo-done needs a number")?)
+            }
+            "--todo-total" => {
+                cli.todo_total = Some(value()?.parse().map_err(|_| "todo-total needs a number")?)
+            }
             other if other.starts_with('-') => {
                 return Err(format!("unknown argument: {other}"));
             }
@@ -56,6 +66,13 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
             }
         }
     }
+    if let (Some(done), Some(total)) = (cli.todo_done, cli.todo_total) {
+        if done > total {
+            return Err("todo-done cannot exceed todo-total".into());
+        }
+    } else if cli.todo_done.is_some() || cli.todo_total.is_some() {
+        return Err("todo progress needs both --todo-done and --todo-total".into());
+    }
     match command.as_deref() {
         Some("session") => {
             let id = positional.ok_or("session needs a session id")?;
@@ -67,6 +84,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
         Some("clear") => {
             if positional.is_some() {
                 return Err("clear takes no session id".to_string());
+            }
+            if cli.todo_done.is_some() {
+                return Err("clear takes no todo progress".to_string());
             }
             cli.session = Some(None);
         }
@@ -102,11 +122,14 @@ pub fn run_with(args: impl IntoIterator<Item = String>) -> i32 {
         .socket
         .or_else(|| std::env::var("MUIS_SOCKET").ok())
         .unwrap_or_else(notify::socket_name);
-    let req = AgentSessionRequest::new(
+    let mut req = AgentSessionRequest::new(
         cli.session.unwrap_or(None),
         cli.directory,
         cli.tab_id.or_else(|| std::env::var("MUIS_TAB_ID").ok()),
     );
+    if let (Some(done), Some(total)) = (cli.todo_done, cli.todo_total) {
+        req = req.with_todos(done, total);
+    }
 
     match notify::send_agent(&socket, &req) {
         Ok(()) => 0,
@@ -148,8 +171,29 @@ mod tests {
                 directory: Some("/tmp".into()),
                 tab_id: Some("t1".into()),
                 socket: Some("s".into()),
+                todo_done: None,
+                todo_total: None,
             }
         );
+    }
+
+    #[test]
+    fn parses_todo_progress_and_validates_it() {
+        let cli = parse_args(args(&[
+            "session",
+            "ses_abc123",
+            "--todo-done",
+            "2",
+            "--todo-total",
+            "5",
+        ]))
+        .unwrap();
+        assert_eq!(cli.todo_done, Some(2));
+        assert_eq!(cli.todo_total, Some(5));
+        assert!(parse_args(args(&["session", "ses_abc123", "--todo-done", "6", "--todo-total", "5"])).is_err());
+        assert!(parse_args(args(&["session", "ses_abc123", "--todo-done", "1"])).is_err());
+        assert!(parse_args(args(&["session", "ses_abc123", "--todo-done", "x", "--todo-total", "1"])).is_err());
+        assert!(parse_args(args(&["clear", "--todo-done", "1", "--todo-total", "1"])).is_err());
     }
 
     #[test]

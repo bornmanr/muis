@@ -33,6 +33,7 @@ export const SESSION_EVENTS = [
   "session.execution.failed",
   "form.created",
   "permission.asked",
+  "todo.updated",
 ];
 
 /** Fire one helper and never block opencode. */
@@ -95,6 +96,16 @@ export function createMuisPlugin({ reportAgent, notify }) {
     reportAgent(args);
   };
 
+  /** Todo progress is state, not a notification; report it every time. */
+  const reportTodos = (id, done, total) => {
+    if (!id || typeof id !== "string" || !id.startsWith("ses_")) return;
+    const info = sessions.get(id);
+    if (info?.parentID) return;
+    const args = ["session", id, "--todo-done", String(done), "--todo-total", String(total)];
+    if (info?.directory) args.push("--dir", info.directory);
+    reportAgent(args);
+  };
+
   /** Where (project/tab) and what (session title) a notification is about. */
   const describe = (id, event) => {
     const s = sessions.get(id) ?? {};
@@ -135,6 +146,13 @@ export function createMuisPlugin({ reportAgent, notify }) {
 
       const id = data.sessionID;
       if (typeof id !== "string") return;
+
+      if (type === "todo.updated") {
+        const todos = Array.isArray(data.todos) ? data.todos : [];
+        const done = todos.filter((todo) => todo?.status === "completed").length;
+        reportTodos(id, done, todos.length);
+        return;
+      }
 
       if (type === "session.created") {
         const directory = data.location?.directory ?? event.location?.directory ?? "";
