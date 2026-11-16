@@ -98,6 +98,19 @@ rustup component add rust-mingw --toolchain stable-x86_64-pc-windows-gnu
 
 Either way, open a new terminal afterwards so PATH applies.
 
+`rust-mingw` ships the linker, `dlltool`, and the import libraries, but rustc
+only finds `dlltool` on PATH. Crates that link with `raw-dylib` (`windows-sys`
+and most of the network stack) fail without it, so add the toolchain's bundled
+tools to every shell you build in:
+
+```powershell
+$sysroot = rustc --print sysroot
+$env:PATH = "$sysroot\lib\rustlib\x86_64-pc-windows-gnu\bin\self-contained;$env:PATH"
+dlltool --version    # expect: GNU dlltool ...
+```
+
+Put those two lines in `notepad $PROFILE` if you want them permanently.
+
 ### 2. Source (once)
 
 ```powershell
@@ -126,6 +139,8 @@ $env:MUIS_UI_DIST = "D:\muis-dist"
 ```
 
 ### 4. Build
+
+With the `dlltool` PATH line from step 1 active in this shell:
 
 ```powershell
 cargo build --release -p muis-server --target x86_64-pc-windows-gnu
@@ -196,13 +211,36 @@ window.
 |---|---|
 | Several `error: failed to run custom build command for …` blocks | You built the whole workspace; build `-p muis-server` only |
 | `linker 'x86_64-w64-mingw32-gcc' not found` | Missing runtime libs: `rustup component add rust-mingw` |
+| `error calling dlltool 'dlltool.exe': program not found` | The bundled tools are not on PATH: run the `$env:PATH` line from step 1 in this shell |
 | `error: failed to find tool. Is 'cl.exe' installed?` | MSVC host: add `--target x86_64-pc-windows-gnu` to the build |
-| Page says "built without a frontend bundle" | `src-ui\dist` was missing at compile time: build or copy it, then rebuild |
+| Page says "built without a frontend bundle" | `src-ui\dist` was missing at compile time, or `MUIS_UI_DIST` points somewhere without `index.html`: build or copy it, clear the variable, then rebuild |
 | Blank page | Wrong port or stale tab: use the URL the server printed, then hard-refresh |
 | `cannot listen on …` | Port taken: drop `--port` and let the OS choose |
 | Build fails on odd paths / files vanish in `target\` | OneDrive or antivirus: build from a plain folder such as `C:\muis` |
+| `Access is denied. (os error 5)` running `build-script-build` | A policy blocks freshly compiled executables; see below |
 | No desktop toast when an agent finishes | Another `muis-server` already owns the notify pipe; close it |
 | Statusbar shows `⎇ —` | Not a git repo, or `git` is not on PATH (not an error) |
+
+### If the build says `Access is denied` (`os error 5`)
+
+Cargo compiled a build script and Windows refused to start it. That is machine
+policy, not the code: `cargo`, `rustc`, and `node` run because they are
+installed and signed, while files you just compiled are neither. Separate the
+two possible rules with a hello-world in two folders:
+
+```powershell
+cargo new --bin "$env:TEMP\muis-probe"
+cargo run --release --target x86_64-pc-windows-gnu --manifest-path "$env:TEMP\muis-probe\Cargo.toml"
+
+cargo new --bin "C:\Repos\muis-probe"
+cargo run --release --target x86_64-pc-windows-gnu --manifest-path "C:\Repos\muis-probe\Cargo.toml"
+```
+
+| Result | Rule | What works |
+|---|---|---|
+| Both run | transient: a scanner held the file | retry the build |
+| `$env:TEMP` runs, repo folder denied | path-based (AppLocker) | build from an allowlisted folder, e.g. `%USERPROFILE%\muis` |
+| Both denied | content-based (Defender ASR "block untrusted executables", or an EDR rule) | only an IT exclusion or an elevated shell gets past it — no source change can |
 
 ### Filing a bug from that machine
 
