@@ -483,9 +483,9 @@ function parseFlags(argv) {
     else if (arg === "--urgency") flags.urgency = Number(argv[++i]);
     else if (arg === "--dir") flags.dir = argv[++i];
     else if (arg.startsWith("-")) throw new Error(`unknown argument: ${arg}`);
-    else if (flags.command === undefined) flags.command = arg;
-    else if (flags.positional === undefined) flags.positional = arg;
-    else throw new Error(`unexpected argument: ${arg}`);
+    // Bare positionals: agent uses `session <id>`, and Codex appends its own
+    // event JSON when it calls the notify CLI, so extras are ignored.
+    else (flags.rest ??= []).push(arg);
   }
   return flags;
 }
@@ -519,18 +519,19 @@ async function agentMode(argv) {
   const flags = parseFlags(argv);
   const socketName = flags.socket || process.env.MUIS_SOCKET || DEFAULT_SOCKET();
   let session;
-  if (flags.command === "clear") {
-    if (flags.positional !== undefined) {
+  const [command, id] = flags.rest ?? [];
+  if (command === "clear") {
+    if (id !== undefined) {
       console.error("muis-agent: clear takes no session id");
       return 2;
     }
     session = undefined;
-  } else if (flags.command === "session") {
-    if (!/^ses_[A-Za-z0-9_-]*[A-Za-z0-9]$/.test(flags.positional ?? "")) {
-      console.error(`muis-agent: not a session id: ${flags.positional ?? ""}`);
+  } else if (command === "session") {
+    if (!/^ses_[A-Za-z0-9_-]*[A-Za-z0-9]$/.test(id ?? "")) {
+      console.error(`muis-agent: not a session id: ${id ?? ""}`);
       return 2;
     }
-    session = flags.positional;
+    session = id;
   } else {
     console.error("usage: muis-agent session <ses_ID> [--dir DIR] [--tab ID] [--socket NAME]");
     return 2;

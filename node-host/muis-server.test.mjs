@@ -196,7 +196,18 @@ test("the notify CLI reaches the open tab", { skip: !UNIX }, async () => {
   const exitCode = await new Promise((resolve) => {
     const cli = spawn(
       process.execPath,
-      [path.join(HERE, "muis-server.mjs"), "--muis-notify", "--title", "Build", "--body", "done", "--socket", name],
+      [
+        path.join(HERE, "muis-server.mjs"),
+        "--muis-notify",
+        "--title",
+        "Build",
+        "--body",
+        "done",
+        "--socket",
+        name,
+        // Codex appends its event payload as a positional argument.
+        JSON.stringify({ type: "agent-turn-complete" }),
+      ],
       { stdio: "ignore" },
     );
     cli.on("exit", resolve);
