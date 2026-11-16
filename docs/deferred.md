@@ -20,6 +20,12 @@ were removed to keep the build and release path focused on the Linux artifact
 Veldmuis repackages (`muis-<version>-x86_64-linux.tar.gz`). Their CI jobs,
 packaging files, docs, and platform-specific code are gone.
 
+Windows is now supported from source instead, through the browser server
+(`cargo run -p muis-server`, see the README): the same crates compile for
+`x86_64-pc-windows-gnu`, CI cross-checks them, and there is deliberately no
+installer, no WebView2 dependency, and no packaged `.exe` to hand around.
+A packaged Windows artifact stays deferred.
+
 Restore from git history if support is revisited: start with the tree before
 this removal, especially `.github/workflows/release.yml`, `packaging/flatpak/`,
 `aur/`, `crates/muis-shell/tauri.conf.json`, and the platform branches in

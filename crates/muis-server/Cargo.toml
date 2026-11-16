@@ -1,0 +1,26 @@
+[package]
+name = "muis-server"
+version = "0.1.0"
+edition = "2021"
+description = "muis browser server: serves the xterm frontend over HTTP and owns pty workers"
+
+[[bin]]
+name = "muis-server"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "process", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+simplelog = "0.12"
+muis-core = { path = "../muis-core" }
+muis-worker = { path = "../muis-worker" }
+muis-notify = { path = "../muis-notify" }
+muis-agent = { path = "../muis-agent" }
+
+[dev-dependencies]
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+base64 = "0.22"

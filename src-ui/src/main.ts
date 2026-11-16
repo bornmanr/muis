@@ -41,6 +41,14 @@ import { clockText } from "./clock";
 import { shouldFocusTerminal } from "./focus";
 import muisIcon from "./assets/muis.png";
 import type { UiToWorker, WorkerToUi } from "./ipc";
+import {
+  IS_SERVE,
+  WsTransport,
+  notifyDesktop,
+  onServeEvent,
+  pickDirectoryServe,
+  rpc,
+} from "./serve";
 import "./style.css";
 
 /**
@@ -54,17 +62,28 @@ import "./style.css";
 
 const IN_TAURI = "__TAURI_INTERNALS__" in window;
 
+/**
+ * Whether a real backend is present: the Tauri window and muis-server both
+ * own ptys, only the transport differs (`shellCall` vs HTTP + WebSocket).
+ */
+const BACKEND = IN_TAURI || IS_SERVE;
+
+/** Run one shell command on whichever backend is present. */
+function shellCall<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+  return IS_SERVE ? rpc<T>(name, args) : invoke<T>(name, args);
+}
+
 /** Set once at init from the shell; true for `muis --testmode`. */
 let testModeActive = false;
 
 function reportDebugStage(stage: string, detail: unknown = undefined): void {
-  if (!IN_TAURI) return;
-  void invoke("debug_report", {
+  if (!BACKEND) return;
+  void shellCall("debug_report", {
     json: JSON.stringify({ stage, detail }),
   }).catch(() => {});
 }
 
-if (IN_TAURI) {
+if (BACKEND) {
   reportDebugStage("frontend-module-loaded");
   window.addEventListener("error", (event) => {
     reportDebugStage("frontend-error", String(event.message));
@@ -100,6 +119,10 @@ if (IN_TAURI) {
 
 /** Best-effort OS toast; no-op outside Tauri or without permission. */
 async function sendDesktopNotification(title: string, body: string): Promise<void> {
+  if (IS_SERVE) {
+    notifyDesktop(title, body);
+    return;
+  }
   if (!IN_TAURI) return;
   try {
     const { isPermissionGranted, requestPermission, sendNotification } = await import(
@@ -161,7 +184,9 @@ class EchoTransport implements Transport {
 }
 
 let store = new SessionStore();
-const client = new WorkerClient(IN_TAURI ? new TauriTransport() : new EchoTransport());
+const client = new WorkerClient(
+  IN_TAURI ? new TauriTransport() : IS_SERVE ? new WsTransport() : new EchoTransport(),
+);
 
 /** A `muis-agent-activity` report routed from the shell. */
 interface CliAgentActivity {
@@ -192,7 +217,7 @@ const sawOutput = new Set<string>();
 const outputWaiters = new Map<string, () => void>();
 
 function scheduleSave(): void {
-  if (!IN_TAURI || testModeActive) return;
+  if (!BACKEND || testModeActive) return;
   window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(() => {
     void saveNow();
@@ -200,36 +225,36 @@ function scheduleSave(): void {
 }
 
 async function saveNow(): Promise<void> {
-  if (!IN_TAURI || testModeActive) return;
+  if (!BACKEND || testModeActive) return;
   const json = store.toJSON();
   if (json === lastSaved) return;
   lastSaved = json;
   try {
-    await invoke("sessions_save", { json });
+    await shellCall("sessions_save", { json });
   } catch {
     /* best effort: a lost save must never break the terminal */
   }
 }
 
 // `muis-notify` clients reach the shell over a local socket; the shell
-// forwards each request here as a `muis-notify` event.
-if (IN_TAURI) {
-  void listen<CliNotify>("muis-notify", (e) => handleNotifyRequest(e.payload)).catch((e: unknown) => {
+// forwards each request as an event. Browser mode gets the same events over
+// the page's WebSocket, so only the subscription differs.
+function subscribe<T>(event: string, handler: (payload: T) => void): void {
+  if (IS_SERVE) {
+    onServeEvent(event, (payload) => handler(payload as T));
+    return;
+  }
+  if (!IN_TAURI) return;
+  void listen<T>(event, (e) => handler(e.payload)).catch((e: unknown) => {
     const w = window as unknown as { __muisErrors?: string[] };
     w.__muisErrors ??= [];
-    w.__muisErrors.push(`notify-listen failed: ${String(e)}`);
-  });
-  void listen<CliAgentSession>("muis-agent-session", (e) => handleAgentSession(e.payload)).catch((e: unknown) => {
-    const w = window as unknown as { __muisErrors?: string[] };
-    w.__muisErrors ??= [];
-    w.__muisErrors.push(`agent-listen failed: ${String(e)}`);
-  });
-  void listen<CliAgentActivity>("muis-agent-activity", (e) => handleAgentActivity(e.payload)).catch((e: unknown) => {
-    const w = window as unknown as { __muisErrors?: string[] };
-    w.__muisErrors ??= [];
-    w.__muisErrors.push(`agent-activity-listen failed: ${String(e)}`);
+    w.__muisErrors.push(`${event}-listen failed: ${String(e)}`);
   });
 }
+
+subscribe<CliNotify>("muis-notify", handleNotifyRequest);
+subscribe<CliAgentSession>("muis-agent-session", handleAgentSession);
+subscribe<CliAgentActivity>("muis-agent-activity", handleAgentActivity);
 
 /** View options; loaded from disk in init, edited in the settings dialog. */
 let cfg: AppConfig = defaultConfig();
@@ -261,7 +286,7 @@ function liveTestCommand(): Promise<string | null> {
 async function defaultShell(): Promise<string> {
   if (shellCache) return shellCache;
   try {
-    shellCache = await invoke<string>("default_shell");
+    shellCache = await shellCall<string>("default_shell");
   } catch {
     shellCache = "/bin/sh";
   }
@@ -535,7 +560,7 @@ function fitShown(sessionId: string, tab: Tab, view: TabView): void {
         if (dims.cols !== view.term.cols || dims.rows !== view.term.rows) {
           view.term.resize(dims.cols, dims.rows);
         }
-        if (IN_TAURI) {
+        if (BACKEND) {
           void client.resize(sessionId, tab.id, view.term.cols, view.term.rows).catch(() => {});
         }
         return;
@@ -605,7 +630,7 @@ function ensureView(sessionId: string, tab: Tab): TabView {
   term.options.linkHandler = {
     activate: (_event: MouseEvent, text: string) => {
       if (!/^https?:\/\//.test(text)) return;
-      if (IN_TAURI) void invoke("open_url", { url: text }).catch(() => {});
+      if (BACKEND) void shellCall("open_url", { url: text }).catch(() => {});
       else window.open(text, "_blank", "noopener");
     },
     hover: () => {},
@@ -635,7 +660,7 @@ function ensureView(sessionId: string, tab: Tab): TabView {
       try {
         const text = await navigator.clipboard.readText();
         if (!text) return;
-        if (IN_TAURI) void client.write(sessionId, tab.id, enc.encode(text)).catch(() => {});
+        if (BACKEND) void client.write(sessionId, tab.id, enc.encode(text)).catch(() => {});
         else term.write(text);
       } catch {
         /* clipboard read blocked */
@@ -654,7 +679,7 @@ function ensureView(sessionId: string, tab: Tab): TabView {
     /* canvas renderer stays active */
   }
 
-  if (IN_TAURI) {
+  if (BACKEND) {
     activity.spawnedAt.set(tab.id, Date.now());
     void (async () => {
       try {
@@ -826,7 +851,7 @@ function closeTab(sessionId: string, tabId: string): void {
   }
   const view = views.get(tabId);
   if (view) {
-    if (IN_TAURI) {
+    if (BACKEND) {
       void client.kill(sessionId, tabId).catch(() => {});
     }
     view.ro?.disconnect(); view.term.dispose();
@@ -852,7 +877,7 @@ function closeSession(w: Workspace): void {
   if (busy && !window.confirm(`Close session "${w.name}"? A process is still running.`)) return;
   for (const t of w.tabs) {
     // Background sessions have no view yet; still tear down their pty.
-    if (IN_TAURI) {
+    if (BACKEND) {
       void client.kill(w.id, t.id).catch(() => {});
     }
     const view = views.get(t.id);
@@ -865,7 +890,7 @@ function closeSession(w: Workspace): void {
     forgetTab(activity, t.id);
     forgetTabState(t.id);
   }
-  if (IN_TAURI) void client.stopSession(w.id).catch(() => {});
+  if (BACKEND) void client.stopSession(w.id).catch(() => {});
   const idx = store.workspaces.findIndex((x) => x.id === w.id);
   if (idx >= 0) store.removeWorkspace(idx);
   renderAll();
@@ -883,7 +908,7 @@ function dropSessionIfLastTab(sessionId: string, tabId: string): void {
   if (!ws) return;
   const isLast = ws.tabs.length === 1 && ws.tabs[0]?.id === tabId;
   if (!isLast) return;
-  if (IN_TAURI) {
+  if (BACKEND) {
     void client.stopSession(sessionId).catch(() => {});
   }
   const view = views.get(tabId);
@@ -973,6 +998,8 @@ function renderSessions(): void {
  * the Selenium suite and plain `vite dev` work without the native picker.
  */
 async function pickDirectory(start: string): Promise<string | null> {
+  // A page cannot open a native dialog, so the server lists folders.
+  if (IS_SERVE) return pickDirectoryServe(start);
   if (!IN_TAURI) return null;
   try {
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -1010,7 +1037,7 @@ sessionDir.autocomplete = "off";
 sessionDir.spellcheck = false;
 const sessionBrowse = el("button", "btn", "Browse…") as HTMLButtonElement;
 sessionBrowse.type = "button";
-if (!IN_TAURI) sessionBrowse.style.display = "none";
+if (!BACKEND) sessionBrowse.style.display = "none";
 const dirWrap = el("span", "dir-pick");
 dirWrap.append(sessionDir, sessionBrowse);
 const sessionQuick = el("div", "quick-picks");
@@ -1061,13 +1088,13 @@ async function renderSessionSubdirs(dir: string): Promise<void> {
     sessionSubs.replaceChildren();
     sessionSubs.style.display = "none";
   };
-  if (!IN_TAURI || !dir) {
+  if (!BACKEND || !dir) {
     clear();
     return;
   }
   let names: string[] = [];
   try {
-    names = await invoke<string[]>("list_subdirs", { path: dir, limit: 10 });
+    names = await shellCall<string[]>("list_subdirs", { path: dir, limit: 10 });
   } catch {
     names = [];
   }
@@ -1504,8 +1531,8 @@ function renderStatusbar(): void {
     const cwd = tab.cwd;
     const cached = gitCache.get(cwd);
     stGit.textContent = cached ?? "⎇ …";
-    if (cached === undefined && IN_TAURI) {
-      void invoke<string>("git_branch", { cwd })
+    if (cached === undefined && BACKEND) {
+      void shellCall<string>("git_branch", { cwd })
         .then((branch) => {
           gitCache.set(cwd, branch ? `⎇ ${branch} ✓` : "⎇ —");
           if (store.currentWorkspace()?.tabs[ws?.active ?? -1]?.cwd === cwd) renderStatusbar();
@@ -1596,6 +1623,15 @@ if (IN_TAURI) {
     .catch(() => {});
 }
 
+if (IS_SERVE) {
+  // Closing the browser tab closes the "window": flush the layout before the
+  // server tears the ptys down. A page cannot await inside beforeunload, so
+  // this is the same best-effort path the 400 ms debounce uses.
+  window.addEventListener("beforeunload", () => {
+    void saveNow();
+  });
+}
+
 window.addEventListener("resize", () => {
   const ws = store.currentWorkspace();
   const active = ws?.tabs[ws.active];
@@ -1606,7 +1642,7 @@ window.addEventListener("resize", () => {
   } catch {
     /* ignore */
   }
-  if (IN_TAURI) void client.resize(ws.id, active.id, view.term.cols, view.term.rows).catch(() => {});
+  if (BACKEND) void client.resize(ws.id, active.id, view.term.cols, view.term.rows).catch(() => {});
 });
 
 const onShortcut = (e: KeyboardEvent): void => {
@@ -1857,7 +1893,7 @@ async function applySettings(): Promise<void> {
     ),
     workspaceThemes: cfg.workspaceThemes,
   };
-  if (IN_TAURI) void invoke("config_save", { json: JSON.stringify(cfg) }).catch(() => {});
+  if (BACKEND) void shellCall("config_save", { json: JSON.stringify(cfg) }).catch(() => {});
   applyTheme(cfg.theme);
   const nextTheme = xtermTheme(cfg.theme);
   const px = effectiveFontSize(cfg);
@@ -2048,11 +2084,11 @@ function installDebugHook(): void {
     };
   };
   // In the Tauri window there are no devtools: phone the snapshot home.
-  if (IN_TAURI) {
+  if (BACKEND) {
     setTimeout(() => {
       try {
         const snap = JSON.stringify((w.__muisDebug as () => unknown)());
-        void invoke("debug_report", { json: snap }).catch(() => {});
+        void shellCall("debug_report", { json: snap }).catch(() => {});
       } catch {
         /* ignore */
       }
@@ -2489,10 +2525,10 @@ function waitForTabOutput(tabId: string, timeoutMs: number): Promise<void> {
 
 /** opencode's session list for a directory, fetched at most once a launch. */
 function opencodeSessions(cwd: string): Promise<AgentSessionInfo[]> {
-  if (!IN_TAURI) return Promise.resolve([]);
+  if (!BACKEND) return Promise.resolve([]);
   let pending = opencodeSessionsCache.get(cwd);
   if (!pending) {
-    pending = invoke<AgentSessionInfo[]>("opencode_sessions", { cwd }).catch(() => []);
+    pending = shellCall<AgentSessionInfo[]>("opencode_sessions", { cwd }).catch(() => []);
     opencodeSessionsCache.set(cwd, pending);
   }
   return pending;
@@ -2500,7 +2536,7 @@ function opencodeSessions(cwd: string): Promise<AgentSessionInfo[]> {
 
 /** Relaunch opencode in one restored tab, exactly once. */
 async function restoreAgentTab(entry: RestoreEntry): Promise<void> {
-  if (!IN_TAURI || testModeActive || agentLaunched.has(entry.tabId)) return;
+  if (!BACKEND || testModeActive || agentLaunched.has(entry.tabId)) return;
   agentLaunched.add(entry.tabId);
   const ws = store.workspaces.find((w) => w.tabs.some((t) => t.id === entry.tabId));
   const tab = ws?.tabs.find((t) => t.id === entry.tabId);
@@ -2548,16 +2584,16 @@ async function init(): Promise<void> {
   reportDebugStage("init-start");
   let home = "~";
   let resumed = false;
-  if (IN_TAURI) {
+  if (BACKEND) {
     try {
-      testModeActive = await invoke<boolean>("is_test_mode");
+      testModeActive = await shellCall<boolean>("is_test_mode");
       if (testModeActive) testBadge.style.display = "";
       reportDebugStage("test-mode", testModeActive);
     } catch {
       /* the test-mode marker is best-effort */
     }
     try {
-      home = await invoke<string>("default_cwd");
+      home = await shellCall<string>("default_cwd");
       reportDebugStage("default-cwd-loaded");
     } catch {
       reportDebugStage("default-cwd-failed");
@@ -2565,12 +2601,12 @@ async function init(): Promise<void> {
     // Install the opencode notification plugin (idempotent; only written
     // when missing or still ours).
     try {
-      await invoke("install_opencode_plugin");
+      await shellCall("install_opencode_plugin");
     } catch {
       /* plugin install is best-effort */
     }
     try {
-      const raw = await invoke<string>("config_load");
+      const raw = await shellCall<string>("config_load");
       if (raw) cfg = configFromJSON(raw);
       reportDebugStage("config-loaded", Boolean(raw));
     } catch {
@@ -2578,7 +2614,7 @@ async function init(): Promise<void> {
     }
     // Restore where we left off. A corrupt file starts fresh, never broken.
     try {
-      const saved = await invoke<string>("sessions_load");
+      const saved = await shellCall<string>("sessions_load");
       if (saved) {
         store = SessionStore.fromJSON(saved);
         resumed = true;
@@ -2588,7 +2624,7 @@ async function init(): Promise<void> {
       reportDebugStage("sessions-load-failed");
     }
   }
-  homeDir = home.startsWith("/") ? home : "";
+  homeDir = /^([/\\]|[A-Za-z]:)/.test(home) ? home : "";
   // Only mint a default session on a fresh start. An empty resumed store
   // means the user closed every session and quit that way on purpose.
   if (store.workspaces.length === 0 && !resumed) store.ensureDefault("home", home);
