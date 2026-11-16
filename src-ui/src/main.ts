@@ -705,7 +705,7 @@ function ensureView(sessionId: string, tab: Tab): TabView {
               // Wait until the shell has emitted its first prompt/banner
               // before exercising the exact UI -> worker -> PTY input path.
               window.setTimeout(() => {
-                trackInput(tab.id, `${testCommand}\n`);
+                trackInput(tab.id, `${testCommand}\n`, false);
                 void client
                   .write(sessionId, tab.id, enc.encode(`${testCommand}\n`))
                   .catch(() => {});
@@ -2169,7 +2169,12 @@ function armIdleFallback(tabId: string): void {
   );
 }
 
-function trackInput(tabId: string, data: string): void {
+/**
+ * Record keystrokes for the command bar. `fromUser` is false for lines muis
+ * types itself (the debug hook), which must not count as the user resuming
+ * work: the restore path relies on that rule.
+ */
+function trackInput(tabId: string, data: string, fromUser = true): void {
   if (!commandTracker.onInput(tabId, data)) return;
   renderCommandHead(tabId);
   armIdleFallback(tabId);
@@ -2178,7 +2183,7 @@ function trackInput(tabId: string, data: string): void {
   // a command start, so without this a waiting mark would stay lit until the
   // tab was closed. It also refreshes the tab label on submit rather than only
   // once the command ends.
-  if (doneTabs.has(tabId)) {
+  if (fromUser && doneTabs.has(tabId)) {
     doneTabs.clear(tabId);
     reportDebugStage("attention-cleared", { tab: tabId, reason: "input" });
   }
