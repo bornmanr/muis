@@ -3,15 +3,26 @@
 //! A missing `dist` is not an error: the binary still builds (so `cargo test
 //! --workspace` works without Node) and serves a placeholder page telling you
 //! to run `npm run build --prefix src-ui`. `MUIS_UI_DIST` overrides the
-//! directory, which is how the release build points at a prebuilt frontend.
+//! directory, which is how the release build points at a prebuilt frontend —
+//! and because a stale override silently produces the placeholder page, an
+//! override that points at nothing is a build error instead.
 
 use std::path::{Path, PathBuf};
 
 fn main() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let dist = std::env::var_os("MUIS_UI_DIST")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| manifest.join("../../src-ui/dist"));
+    let (dist, overridden) = match std::env::var_os("MUIS_UI_DIST") {
+        Some(dir) if !dir.is_empty() => (PathBuf::from(dir), true),
+        _ => (manifest.join("../../src-ui/dist"), false),
+    };
+
+    if overridden && !dist.join("index.html").is_file() {
+        panic!(
+            "MUIS_UI_DIST is set to {}, but there is no index.html there.\n\
+             Unset it to embed src-ui/dist, or point it at a built dist directory.",
+            dist.display()
+        );
+    }
 
     println!("cargo:rerun-if-changed={}", dist.display());
     println!("cargo:rerun-if-env-changed=MUIS_UI_DIST");
