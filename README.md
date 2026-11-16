@@ -4,9 +4,11 @@ muis is the terminal emulator for Veldmuis: Rust backend, xterm.js
 frontend, Tauri native window. It ships as the Veldmuis Arch system package
 (the default).
 
-The only supported build path is the Veldmuis Linux tarball. Windows,
-Flatpak, AppImage, and AUR builds were removed to keep the pipeline focused;
-see `docs/deferred.md` before restoring any of them.
+The only packaged artifact is the Veldmuis Linux tarball. Windows has no
+installer and no packaged binary: it runs from source in browser mode
+(`muis-server`, below). Flatpak, AppImage, and AUR builds were removed to
+keep the pipeline focused; see `docs/deferred.md` before restoring any of
+them.
 
 Chrome follows `../wezterm-web/index.html` (Breeze titlebar, sessions
 sidebar, tabbar, statusbar). `design/mock.html` is superseded. VT
@@ -19,6 +21,7 @@ crates/muis-core/    session model, config, shell probe, UI/worker IPC (no UI de
 crates/muis-worker/  muis-worker binary: one process per session, pty via portable-pty
 crates/muis-notify/  muis-notify binary: send a notification to the running window
 crates/muis-shell/   muis binary: Tauri 2 window (WebKitGTK)
+crates/muis-server/  muis-server binary: the same UI in a browser (HTTP + WS)
 src-ui/              TypeScript + xterm.js frontend (Vite)
 tests/fixtures/      shared UI/worker IPC contract both sides test against
 docs/                architecture notes, target mockup
@@ -49,6 +52,23 @@ Dev window (needs system WebKit):
 cargo run -p muis-shell
 ```
 
+Browser mode (`muis-server`). The same frontend, served on loopback by a
+self-contained binary: it embeds `src-ui/dist` and re-execs itself as the pty
+worker, so there is no webview runtime, no sidecar, and nothing to install.
+
+```sh
+npm run build --prefix src-ui   # baked into the binary at compile time
+cargo run -p muis-server        # prints and opens http://127.0.0.1:<port>/?t=<token>
+```
+
+It writes the same config and session files as the native window, so a
+session restored in one mode opens in the other. Flags: `--port N`,
+`--no-open`, `--testmode`. Set `MUIS_HOME` (or, on Windows, drop a
+`muis.portable` file next to the binary) to keep every path in one folder.
+Differences from the native window: the folder picker is served by the
+backend, notifications use the browser's Notification API, there is no
+custom titlebar, and the tab is the window — closing it ends its ptys.
+
 ## Use
 
 - Ctrl+T new tab, × button closes (confirms when a process is busy),
@@ -76,6 +96,8 @@ cargo run -p muis-shell
   echo, exit code 42).
 - `npm test` in `src-ui`: theme values locked to the target HTML, session
   store behavior, same IPC fixture from the TS side.
+- `cargo test -p muis-server`: serves the embedded bundle, answers the RPC
+  surface, and drives a real pty over the WebSocket end to end.
 - Selenium preview interaction tests (headless Chrome): build the UI,
   start `python3 -m http.server 4173 --directory src-ui/dist`, then run
   `MUIS_URL=http://127.0.0.1:4173 npm test --prefix tests/e2e`.

@@ -301,3 +301,30 @@ body{
 /* ---------- danger button ---------- */
 .btn.danger{border-color:var(--red); color:var(--red)}
 .btn.danger:hover{background:var(--red); color:#fff; border-color:var(--red)}
+/* ---------- browser-mode directory picker (muis-server) ---------- */
+.dirpicker-overlay{position:fixed; inset:0; z-index:30; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.62)}
+.dirpicker{
+  background:#2b3035; color:var(--fg); border:1px solid var(--border); border-radius:6px;
+  box-shadow:0 18px 50px rgba(0,0,0,.6); width:min(560px,92vw); max-height:80vh;
+  display:flex; flex-direction:column; font-family:var(--uifont); font-size:12.5px;
+}
+.dirpicker-head{display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--border-dark)}
+.dirpicker-path{
+  flex:1; min-width:0; font-family:var(--font); font-size:12px; color:var(--dim);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; direction:rtl; text-align:left;
+}
+.dirpicker-list{flex:1; overflow-y:auto; padding:6px; scrollbar-width:thin; scrollbar-color:#3a4045 transparent}
+.dirpicker-row{
+  display:block; width:100%; text-align:left; background:transparent; border:0; color:var(--fg);
+  font:12.5px var(--uifont); padding:7px 10px; border-radius:4px; cursor:pointer;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.dirpicker-row:hover{background:#394147}
+.dirpicker-empty{padding:14px 10px; color:var(--dim); font-style:italic}
+.dirpicker-foot{display:flex; justify-content:flex-end; gap:8px; padding:10px 14px; border-top:1px solid var(--border-dark)}
+/* ---------- browser chrome: keep scrollbars dark (serve mode) ---------- */
+.xterm-viewport{scrollbar-width:thin; scrollbar-color:#3a4045 transparent}
+.xterm-viewport::-webkit-scrollbar{width:10px; background:transparent}
+.xterm-viewport::-webkit-scrollbar-thumb{background:#3a4045; border-radius:5px; border:2px solid #232629}
+.xterm-viewport::-webkit-scrollbar-thumb:hover{background:#4a5258}
+.xterm-viewport::-webkit-scrollbar-track{background:transparent}

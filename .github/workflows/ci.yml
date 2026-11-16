@@ -98,6 +98,27 @@ jobs:
           name: muis-native-xvfb
           path: tests/e2e/artifacts/live-x11/
 
+  # The Windows path is browser mode only, so it is the same crates on a
+  # different target: type-check them so the cfg(windows) shims cannot rot.
+  windows-check:
+    needs: build-ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-windows
+      - uses: actions/download-artifact@v6
+        with:
+          name: ui-dist
+          path: src-ui/dist
+      - run: >
+          cargo check --locked --target x86_64-pc-windows-gnu
+          -p muis-core -p muis-worker -p muis-notify -p muis-agent -p muis-server
+
   browser-e2e:
     needs: build-ui
     runs-on: ubuntu-latest

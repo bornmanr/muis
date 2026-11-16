@@ -72,7 +72,14 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
 
 /// Entrypoint: parse `std::env::args()` without the program name.
 pub fn run() -> i32 {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    run_with(std::env::args().skip(1))
+}
+
+/// Run with an explicit argument list (without the program name). The
+/// standalone binary passes `args().skip(1)`; a single-binary build passes
+/// the arguments after its `--muis-notify` mode flag.
+pub fn run_with(args: impl IntoIterator<Item = String>) -> i32 {
+    let args: Vec<String> = args.into_iter().collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
         println!("{USAGE}");
         return 0;

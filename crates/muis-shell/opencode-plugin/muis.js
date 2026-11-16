@@ -70,9 +70,14 @@ function reportAgent(args) {
   send(bin || "muis-agent", bin ? ["--muis-agent", ...args] : args);
 }
 
-/** Raise a desktop toast in muis. */
+/**
+ * Raise a desktop toast in muis. A packaged muis ships the `muis-notify`
+ * sidecar, but a single-binary build exports `MUIS_BIN` and hosts the same
+ * command behind its `--muis-notify` mode flag.
+ */
 function notify(args) {
-  send("muis-notify", args);
+  const bin = process.env.MUIS_BIN;
+  send(bin || "muis-notify", bin ? ["--muis-notify", ...args] : args);
 }
 
 /** Project name from a directory, for the notification title. */
