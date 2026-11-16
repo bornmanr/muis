@@ -34,6 +34,7 @@ export function sendAgent(args, env = process.env) {
     const child = spawn(command, [...prefix, ...args], {
       stdio: "ignore",
       windowsHide: true,
+      shell: process.platform === "win32",
     });
     child.on("error", () => {});
     child.unref();

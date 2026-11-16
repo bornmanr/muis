@@ -54,7 +54,13 @@ export const SESSION_EVENTS = [
 /** Fire one helper and never block opencode. */
 function send(command, args) {
   try {
-    const child = spawn(command, args, { stdio: "ignore", windowsHide: true });
+    // Windows resolves `.cmd` shims only through a shell, and the browser
+    // host hands us exactly that file via `MUIS_BIN`.
+    const child = spawn(command, args, {
+      stdio: "ignore",
+      windowsHide: true,
+      shell: process.platform === "win32",
+    });
     child.on("error", () => {});
     child.unref();
   } catch {

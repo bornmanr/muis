@@ -20,6 +20,7 @@ import WebSocket from "ws";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const UNIX = process.platform !== "win32";
 
+const SOCKET_NAME = `muis-node-test-${process.pid}`;
 let child;
 let port;
 let token;
@@ -62,7 +63,7 @@ before(async () => {
       env: {
         ...process.env,
         MUIS_HOME: home,
-        MUIS_SOCKET_NAME: `muis-node-test-${process.pid}`,
+        MUIS_SOCKET_NAME: SOCKET_NAME,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -176,6 +177,38 @@ test("runs a real shell over the websocket", { skip: !UNIX }, async () => {
   assert.match(output, /muis-node-ok/, `shell output: ${output}`);
 });
 
-test("notifications reach the open tab over the local pipe", { skip: process.platform !== "win32" }, async () => {
-  // Named pipes are Windows-only; covered by the manual Windows run.
+test("the notify CLI reaches the open tab", { skip: !UNIX }, async () => {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws?t=${token}`);
+  await new Promise((resolve, reject) => {
+    socket.once("open", resolve);
+    socket.once("error", reject);
+  });
+  const received = [];
+  socket.on("message", (data) => received.push(JSON.parse(String(data))));
+
+  const name = `${SOCKET_NAME}-testmode`;
+  const pipe = path.join(os.tmpdir(), `${name}.sock`);
+  for (let i = 0; i < 100 && !fs.existsSync(pipe); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.ok(fs.existsSync(pipe), `notify socket: ${pipe}`);
+
+  const exitCode = await new Promise((resolve) => {
+    const cli = spawn(
+      process.execPath,
+      [path.join(HERE, "muis-server.mjs"), "--muis-notify", "--title", "Build", "--body", "done", "--socket", name],
+      { stdio: "ignore" },
+    );
+    cli.on("exit", resolve);
+  });
+  assert.equal(exitCode, 0);
+
+  for (let i = 0; i < 100 && !received.some((frame) => frame.event === "muis-notify"); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const notify = received.find((frame) => frame.event === "muis-notify");
+  assert.ok(notify, `no notification frame: ${JSON.stringify(received)}`);
+  assert.equal(notify.payload.body, "done");
+  assert.equal(notify.payload.title, "Build");
+  socket.close();
 });
