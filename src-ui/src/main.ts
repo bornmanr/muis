@@ -2170,10 +2170,19 @@ function armIdleFallback(tabId: string): void {
 }
 
 function trackInput(tabId: string, data: string): void {
-  if (commandTracker.onInput(tabId, data)) {
-    renderCommandHead(tabId);
-    armIdleFallback(tabId);
+  if (!commandTracker.onInput(tabId, data)) return;
+  renderCommandHead(tabId);
+  armIdleFallback(tabId);
+  // Submitting a line is the user picking the work back up. Shells without
+  // OSC 133 markers (cmd and PowerShell — every Windows default) never report
+  // a command start, so without this a waiting mark would stay lit until the
+  // tab was closed. It also refreshes the tab label on submit rather than only
+  // once the command ends.
+  if (doneTabs.has(tabId)) {
+    doneTabs.clear(tabId);
+    reportDebugStage("attention-cleared", { tab: tabId, reason: "input" });
   }
+  renderTabs();
 }
 
 function finishCommand(tabId: string, exit: number | null): void {
