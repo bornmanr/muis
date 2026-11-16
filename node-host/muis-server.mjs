@@ -19,7 +19,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
-import { createServer as createPipeServer } from "node:net";
+import { createConnection, createServer as createPipeServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,8 +72,9 @@ function parseArgs(argv) {
 
 function portableDir() {
   if (!IS_WIN) return null;
-  const exeDir = path.dirname(process.execPath);
-  return existsSync(path.join(exeDir, "muis.portable")) ? path.join(exeDir, "data") : null;
+  // Next to this script, not next to node.exe: the host may be a shared
+  // install, and "the folder I put muis in" is what a portable copy means.
+  return existsSync(path.join(HERE, "muis.portable")) ? path.join(HERE, "data") : null;
 }
 
 function homeOverride() {
@@ -334,7 +335,17 @@ async function rpc(method, args, state) {
 
 /* ------------------------------ websocket ------------------------------ */
 
-function createPool(send, socketName) {
+async function ensureShims(scriptPath) {
+  const dir = path.join(stateDir(), "bin");
+  await fs.mkdir(dir, { recursive: true });
+  const line = (flags) => `@echo off\r\n"${process.execPath}" "${scriptPath}"${flags} %*\r\n`;
+  await fs.writeFile(path.join(dir, "muis.cmd"), line(""), "utf8");
+  await fs.writeFile(path.join(dir, "muis-notify.cmd"), line(" --muis-notify"), "utf8");
+  await fs.writeFile(path.join(dir, "muis-agent.cmd"), line(" --muis-agent"), "utf8");
+  return dir;
+}
+
+function createPool(send, socketName, extraEnv = {}) {
   /** session id -> Map(pty id -> pty) */
   const sessions = new Map();
 
@@ -364,6 +375,7 @@ function createPool(send, socketName) {
         cwd: msg.cwd || os.homedir(),
         env: {
           ...process.env,
+          ...extraEnv,
           TERM: "xterm-256color",
           TERM_PROGRAM: "muis",
           MUIS_TAB_ID: msg.pty_id,
@@ -438,6 +450,100 @@ function createPool(send, socketName) {
   };
 }
 
+/* --------------------------- CLI helper modes --------------------------- */
+
+const DEFAULT_SOCKET = () => `muis-notify-${process.env.USER ?? process.env.USERNAME ?? "default"}`;
+
+function pipePathFor(name) {
+  return IS_WIN ? `\\\\.\\pipe\\${name}` : path.join(os.tmpdir(), `${name}.sock`);
+}
+
+async function sendToPipe(socketName, payload) {
+  return new Promise((resolve) => {
+    const connection = createConnection(pipePathFor(socketName), () => {
+      connection.end(JSON.stringify(payload) + "\n");
+      resolve(true);
+    });
+    connection.on("error", () => resolve(false));
+    connection.on("data", () => {});
+  });
+}
+
+/** `--flag value` pairs plus bare flags, mirroring the Rust CLI parsers. */
+function parseFlags(argv) {
+  const flags = {};
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--running") flags.running = true;
+    else if (arg === "--title") flags.title = argv[++i];
+    else if (arg === "--body") flags.body = argv[++i];
+    else if (arg === "--tab") flags.tab = argv[++i];
+    else if (arg === "--socket") flags.socket = argv[++i];
+    else if (arg === "--session") flags.session = argv[++i];
+    else if (arg === "--urgency") flags.urgency = Number(argv[++i]);
+    else if (arg === "--dir") flags.dir = argv[++i];
+    else if (arg.startsWith("-")) throw new Error(`unknown argument: ${arg}`);
+    else if (flags.command === undefined) flags.command = arg;
+    else if (flags.positional === undefined) flags.positional = arg;
+    else throw new Error(`unexpected argument: ${arg}`);
+  }
+  return flags;
+}
+
+function tabFrom(flags) {
+  return flags.tab ?? process.env.MUIS_TAB_ID ?? undefined;
+}
+
+/** `--muis-notify`: the toast/activity client the opencode plugin calls. */
+async function notifyMode(argv) {
+  const flags = parseFlags(argv);
+  const socketName = flags.socket || process.env.MUIS_SOCKET || DEFAULT_SOCKET();
+  const payload = flags.running
+    ? { kind: "agent-activity", state: "running", tab_id: tabFrom(flags), session: flags.session }
+    : {
+        ...(flags.title ? { title: flags.title } : {}),
+        body: flags.body ?? "",
+        ...(tabFrom(flags) ? { tab_id: tabFrom(flags) } : {}),
+        ...(flags.urgency !== undefined && !Number.isNaN(flags.urgency) ? { urgency: flags.urgency } : {}),
+        ...(flags.session ? { session: flags.session } : {}),
+      };
+  if (!flags.running && flags.body === undefined) {
+    console.error("muis-notify: --body is required");
+    return 2;
+  }
+  return (await sendToPipe(socketName, payload)) ? 0 : 1;
+}
+
+/** `--muis-agent`: report which agent session a tab is showing. */
+async function agentMode(argv) {
+  const flags = parseFlags(argv);
+  const socketName = flags.socket || process.env.MUIS_SOCKET || DEFAULT_SOCKET();
+  let session;
+  if (flags.command === "clear") {
+    if (flags.positional !== undefined) {
+      console.error("muis-agent: clear takes no session id");
+      return 2;
+    }
+    session = undefined;
+  } else if (flags.command === "session") {
+    if (!/^ses_[A-Za-z0-9_-]*[A-Za-z0-9]$/.test(flags.positional ?? "")) {
+      console.error(`muis-agent: not a session id: ${flags.positional ?? ""}`);
+      return 2;
+    }
+    session = flags.positional;
+  } else {
+    console.error("usage: muis-agent session <ses_ID> [--dir DIR] [--tab ID] [--socket NAME]");
+    return 2;
+  }
+  const payload = {
+    kind: "agent-session",
+    ...(session ? { session } : {}),
+    ...(flags.dir ? { directory: flags.dir } : {}),
+    ...(tabFrom(flags) ? { tab_id: tabFrom(flags) } : {}),
+  };
+  return (await sendToPipe(socketName, payload)) ? 0 : 1;
+}
+
 /* -------------------------------- http --------------------------------- */
 
 const MIME = {
@@ -489,7 +595,13 @@ function requestToken(req, url) {
 }
 
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  // Hidden modes: the opencode plugin and `muis-notify` call this same script
+  // through the shims created below, exactly like the single-binary Rust host.
+  if (argv[0] === "--muis-notify") process.exit(await notifyMode(argv.slice(1)));
+  if (argv[0] === "--muis-agent") process.exit(await agentMode(argv.slice(1)));
+
+  const options = parseArgs(argv);
   const token = randomBytes(16).toString("hex");
   const user = process.env.USER ?? process.env.USERNAME ?? "default";
   const socketName = (() => {
@@ -499,6 +611,18 @@ async function main() {
 
   const state = { testmode: options.testmode };
   const clients = new Set();
+
+  // A tab must be able to run `muis-notify --body done`, and the opencode
+  // plugin needs `MUIS_BIN` to point at something it can spawn. Windows cannot
+  // spawn a `.cmd` without a shell, which the plugin asks for on win32.
+  const shimDir = IS_WIN ? await ensureShims(fileURLToPath(import.meta.url)) : null;
+  const ptyEnv = shimDir
+    ? {
+        PATH: `${shimDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
+        MUIS_BIN: path.join(shimDir, "muis.cmd"),
+      }
+    : {};
 
   // CLI notifications (`muis-notify`, `muis-agent`, the opencode plugin)
   // reach the host over one local socket and fan out to every open tab.
@@ -619,7 +743,7 @@ async function main() {
     clients.add(ws);
     const pool = createPool((frame) => {
       if (ws.readyState === 1) ws.send(JSON.stringify(frame));
-    }, socketName);
+    }, socketName, ptyEnv);
     ws.on("message", (data) => pool.frame(String(data)));
     ws.on("close", () => {
       clients.delete(ws);

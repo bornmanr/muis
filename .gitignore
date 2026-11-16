@@ -8,6 +8,7 @@ src-ui/node_modules/
 src-ui/dist/
 tests/e2e/node_modules/
 node-host/node_modules/
+node-host/data/
 tests/e2e/artifacts/
 
 # Editor / OS
