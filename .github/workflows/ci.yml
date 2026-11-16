@@ -119,6 +119,24 @@ jobs:
           cargo check --locked --target x86_64-pc-windows-gnu
           -p muis-core -p muis-worker -p muis-notify -p muis-agent -p muis-server
 
+  # The JavaScript host is the fallback for machines that refuse to start
+  # freshly compiled binaries; it must stay green even though it is not the
+  # artifact we ship on Linux.
+  node-host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: node-host/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
+      - run: npm ci
+        working-directory: node-host
+      - run: npm test
+        working-directory: node-host
+
   browser-e2e:
     needs: build-ui
     runs-on: ubuntu-latest

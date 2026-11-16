@@ -1,0 +1,15 @@
+{
+  "name": "muis-node-host",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Browser host for muis that runs on node.exe, for machines that refuse to start compiled binaries",
+  "scripts": {
+    "start": "node muis-server.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0",
+    "ws": "^8.18.3"
+  }
+}
