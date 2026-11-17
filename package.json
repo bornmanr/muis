@@ -1,0 +1,10 @@
+{
+  "name": "muis",
+  "private": true,
+  "description": "Terminal emulator: Rust pty workers, xterm.js frontend",
+  "scripts": {
+    "start": "node node-host/launch.mjs",
+    "windows": "node node-host/launch.mjs",
+    "test:node-host": "npm --prefix node-host test"
+  }
+}

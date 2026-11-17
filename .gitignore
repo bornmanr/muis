@@ -29,3 +29,6 @@ MUIS_GPG_PASSPHRASE*
 *.rev
 **/keyring-release/
 **/muis-release-key/
+
+# Root launcher
+/node_modules/
