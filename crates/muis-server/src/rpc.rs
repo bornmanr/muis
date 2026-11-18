@@ -178,7 +178,7 @@ fn list_subdirs(path: &str, limit: usize) -> Vec<String> {
             .collect(),
         Err(_) => Vec::new(),
     };
-    names.sort();
+    names.sort_by_key(|name| name.to_lowercase());
     names.truncate(limit.min(50));
     names
 }

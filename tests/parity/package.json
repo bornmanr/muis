@@ -1,0 +1,13 @@
+{
+  "name": "muis-parity",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Contract tests that both browser hosts must pass",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
