@@ -5,10 +5,11 @@ frontend, Tauri native window. It ships as the Veldmuis Arch system package
 (the default).
 
 The only packaged artifact is the Veldmuis Linux tarball. Windows has no
-installer and no packaged binary: it runs from source in browser mode
-(`muis-server`, below). Flatpak, AppImage, and AUR builds were removed to
-keep the pipeline focused; see `docs/deferred.md` before restoring any of
-them.
+installer and no packaged binary: it runs from source in browser mode, either
+on Node (`npm start`, no build step) or, where policy allows compiled
+binaries, via the Rust host (`muis-server`). Flatpak, AppImage, and AUR builds
+were removed to keep the pipeline focused; see `docs/deferred.md` before
+restoring any of them.
 
 Chrome follows `../wezterm-web/index.html` (Breeze titlebar, sessions
 sidebar, tabbar, statusbar). `design/mock.html` is superseded. VT
@@ -22,6 +23,7 @@ crates/muis-worker/  muis-worker binary: one process per session, pty via portab
 crates/muis-notify/  muis-notify binary: send a notification to the running window
 crates/muis-shell/   muis binary: Tauri 2 window (WebKitGTK)
 crates/muis-server/  muis-server binary: the same UI in a browser (HTTP + WS)
+node-host/           same browser host in JavaScript + the `npm start` launcher
 src-ui/              TypeScript + xterm.js frontend (Vite)
 tests/fixtures/      shared UI/worker IPC contract both sides test against
 docs/                architecture notes, target mockup
@@ -52,12 +54,13 @@ Dev window (needs system WebKit):
 cargo run -p muis-shell
 ```
 
-Browser mode (`muis-server`). The same frontend, served on loopback by a
-self-contained binary: it embeds `src-ui/dist` and re-execs itself as the pty
-worker, so there is no webview runtime, no sidecar, and nothing to install.
+Browser mode. The same frontend, served on loopback: no webview runtime, no
+sidecar, nothing installed. Two interchangeable hosts speak one protocol, so
+the frontend cannot tell them apart:
 
 ```sh
-npm run build --prefix src-ui   # baked into the binary at compile time
+npm start                       # Node host: no compiler, no build step needed
+npm run build --prefix src-ui   # Rust host: bundle is embedded at compile time
 cargo run -p muis-server        # prints and opens http://127.0.0.1:<port>/?t=<token>
 ```
 
@@ -69,17 +72,54 @@ Differences from the native window: the folder picker is served by the
 backend, notifications use the browser's Notification API, there is no
 custom titlebar, and the tab is the window — closing it ends its ptys.
 
-## Windows (from source)
+## Windows
 
-Windows has no installer and no packaged executable. It runs the same UI in a
-browser, served by `muis-server`, which you compile on the machine itself:
-nothing is installed, nothing needs admin, and there is no WebView2, Visual
-Studio, or Windows SDK dependency. A locally built binary also carries no
-Mark-of-the-Web, so it starts without a SmartScreen prompt.
+Windows has no installer and no packaged binary. Two browser hosts cover it,
+neither needing admin, WebView2, or the Windows SDK:
 
-### 1. Toolchain (once)
+| Host | Needs | Use when |
+|---|---|---|
+| **Node host** (`npm start`) | Node 20+ | always — it starts no binary of its own |
+| **Rust host** (`cargo build -p muis-server`) | rustup, GNU host | the machine allows locally built binaries |
 
-Rust per-user with the GNU host, so no MSVC toolchain is involved:
+Start with the Node host on a managed machine: the only executable it starts is
+`node.exe`, which is installed and allowed, while a Rust build has to *start*
+the binaries it just produced.
+
+### Node host
+
+```powershell
+git clone https://github.com/bornmanr/muis
+cd muis
+npm start
+```
+
+`npm start` (or double-clicking `muis.cmd`) covers the setup that would
+otherwise be manual:
+
+- installs the host's dependencies once (`node-host\node_modules`);
+- rebuilds `src-ui\dist` only when `src-ui` is newer than the last build;
+- serves on <http://127.0.0.1:7800/>, so a bookmark keeps working, and reopens
+  the browser instead of starting a second server when it is already up.
+
+Flags pass through: `npm start -- --testmode`, `--no-open`, `--port 0`,
+`--root D:\muis-dist`. State lives in `%APPDATA%\muis` and logs in
+`%LOCALAPPDATA%\muis\logs`; set `MUIS_HOME`, or drop a `muis.portable` file in
+`node-host\`, to keep everything in one deletable folder.
+
+Notifications and tab labels work without shell support: the Codex hook points
+at the host (`%USERPROFILE%\.codex\config.toml`):
+
+```toml
+notify = ["node", "C:\\Repos\\muis\\node-host\\muis-server.mjs", "--muis-notify", "--body", "done"]
+```
+
+Use `node` plus the script path, not `muis-notify.cmd`: Codex starts the hook
+itself, without a shell, and Windows cannot start a `.cmd` that way.
+
+### Rust host
+
+For machines that allow compiled binaries. Per-user Rust, GNU host, no MSVC:
 
 ```powershell
 # rustup-init.exe from https://rustup.rs ; per-user, no admin, no UAC
@@ -88,20 +128,8 @@ rustup component add rust-mingw
 rustup target add x86_64-pc-windows-gnu
 ```
 
-Already have Rust on the MSVC host? Add the GNU toolchain instead of
-reinstalling, then prefix `cargo` with `+stable-x86_64-pc-windows-gnu`:
-
-```powershell
-rustup toolchain install stable-x86_64-pc-windows-gnu
-rustup component add rust-mingw --toolchain stable-x86_64-pc-windows-gnu
-```
-
-Either way, open a new terminal afterwards so PATH applies.
-
 `rust-mingw` ships the linker, `dlltool`, and the import libraries, but rustc
-only finds `dlltool` on PATH. Crates that link with `raw-dylib` (`windows-sys`
-and most of the network stack) fail without it, so add the toolchain's bundled
-tools to every shell you build in:
+only finds `dlltool` on PATH, and `windows-sys` needs it (`raw-dylib`):
 
 ```powershell
 $sysroot = rustc --print sysroot
@@ -109,124 +137,52 @@ $env:PATH = "$sysroot\lib\rustlib\x86_64-pc-windows-gnu\bin\self-contained;$env:
 dlltool --version    # expect: GNU dlltool ...
 ```
 
-Put those two lines in `notepad $PROFILE` if you want them permanently.
-
-### 2. Source (once)
-
-```powershell
-git clone https://github.com/bornmanr/muis
-cd muis
-```
-
-Without git: download the source zip from the repo page and extract it. Source
-files carry nothing for a policy to block, and no later step downloads an
-executable.
-
-### 3. Frontend bundle (once)
-
-With Node:
+Then the bundle and the build — **server only**; a plain `cargo build` also
+builds the Tauri window, whose Windows build script needs a resource compiler
+the GNU toolchain does not ship:
 
 ```powershell
-npm ci --prefix src-ui
 npm run build --prefix src-ui
-```
-
-Without Node: copy the `src-ui\dist` folder from a machine that has it (it is
-gitignored, so a clone never contains it), or point the build at the copy:
-
-```powershell
-$env:MUIS_UI_DIST = "D:\muis-dist"
-```
-
-### 4. Build
-
-With the `dlltool` PATH line from step 1 active in this shell:
-
-```powershell
 cargo build --release -p muis-server --target x86_64-pc-windows-gnu
-```
-
-Build the **server only**. A plain `cargo build` also builds the Tauri window,
-whose Windows build script needs a resource compiler the GNU toolchain does not
-ship; that is the most common failure here, and Windows does not need the Tauri
-window.
-
-### 5. Run
-
-```powershell
 .\target\x86_64-pc-windows-gnu\release\muis-server.exe
 ```
 
-It prints `muis serve: http://127.0.0.1:<port>/?t=<token>` and opens your
-browser. It binds loopback only, so there is no firewall prompt.
-
-### Keep it in one folder
-
-One directory, one executable, one marker file — no install step:
-
-```powershell
-$app = "$env:USERPROFILE\muis"
-New-Item -ItemType Directory -Force $app | Out-Null
-Copy-Item .\target\x86_64-pc-windows-gnu\release\muis-server.exe $app
-New-Item -ItemType File $app\muis.portable
-& "$app\muis-server.exe" --port 7800
-```
-
-`muis.portable` (or `MUIS_HOME`) keeps config, sessions, and logs in
-`$app\data`, so deleting that folder resets muis completely. Without it, state
-lives in `%APPDATA%\muis` and logs in `%LOCALAPPDATA%\muis\logs`.
-
-Bookmark `http://127.0.0.1:7800/`: the token is injected on every page load, so
-a stale `?t=` in the bookmark still works. For a window without browser chrome:
-
-```powershell
-Start-Process msedge "--app=http://127.0.0.1:7800/"
-```
-
-| Flag | Effect |
-|---|---|
-| `--port N` | fixed port (default: the OS picks one, so two copies never clash) |
-| `--no-open` | do not launch a browser |
-| `--testmode` | fresh sessions, nothing persisted, separate notify socket |
-| `--help` | usage |
+The bundle is embedded at compile time, so a UI change needs both steps again;
+`build.rs` re-embeds automatically once `dist` changes.
 
 ### Working on it
 
-The UI is embedded at compile time, so a UI change needs both steps and a
-server restart:
-
-```powershell
-npm run build --prefix src-ui
-cargo build --release -p muis-server --target x86_64-pc-windows-gnu
-```
-
-`build.rs` watches `src-ui/dist` and re-embeds it, so `cargo run -p muis-server
---target x86_64-pc-windows-gnu` alone picks up new frontend code. Rust-only
-changes need nothing else. Browser mode has devtools (F12), unlike the native
-window.
+- Node host: `npm start` rebuilds the bundle itself; restart it for host
+  changes. No build step, and devtools (F12) work.
+- Rust host: rebuild with `cargo build -p muis-server` after a UI change.
+- Tests: `cargo test --workspace`, `npm test --prefix src-ui`,
+  `npm test --prefix node-host`.
 
 ### Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
+| `npm start` fails while installing `node-pty` | Node too old, or npm blocked the install: the win32 prebuild is in the package, so `node -e "require('node-pty')"` shows whether it loads |
+| Page says "built without a frontend bundle" | Node host: `src-ui\dist` is missing and the build was skipped; Rust host: `dist` was missing at compile time, or `MUIS_UI_DIST` has no `index.html` |
+| Blank page | Wrong port or a stale tab: use the URL that was printed, then hard refresh |
+| `cannot listen on …` | Port taken: `--port 0` lets the OS choose |
+| `muis is already running: …` | Not an error; the launcher reopened the existing instance |
 | Several `error: failed to run custom build command for …` blocks | You built the whole workspace; build `-p muis-server` only |
-| `linker 'x86_64-w64-mingw32-gcc' not found` | Missing runtime libs: `rustup component add rust-mingw` |
-| `error calling dlltool 'dlltool.exe': program not found` | The bundled tools are not on PATH: run the `$env:PATH` line from step 1 in this shell |
-| `error: failed to find tool. Is 'cl.exe' installed?` | MSVC host: add `--target x86_64-pc-windows-gnu` to the build |
-| Page says "built without a frontend bundle" | `src-ui\dist` was missing at compile time, or `MUIS_UI_DIST` points somewhere without `index.html`: build or copy it, clear the variable, then rebuild |
-| Blank page | Wrong port or stale tab: use the URL the server printed, then hard-refresh |
-| `cannot listen on …` | Port taken: drop `--port` and let the OS choose |
+| `linker 'x86_64-w64-mingw32-gcc' not found` | `rustup component add rust-mingw` |
+| `error calling dlltool 'dlltool.exe': program not found` | Run the `$env:PATH` line above in this shell |
+| `error: failed to find tool. Is 'cl.exe' installed?` | MSVC host: add `--target x86_64-pc-windows-gnu` |
 | Build fails on odd paths / files vanish in `target\` | OneDrive or antivirus: build from a plain folder such as `C:\muis` |
-| `Access is denied. (os error 5)` running `build-script-build` | A policy blocks freshly compiled executables; see below |
-| No desktop toast when an agent finishes | Another `muis-server` already owns the notify pipe; close it |
+| No desktop toast when an agent finishes | Another instance already owns the notify pipe, or the agent's hook is not installed (see above) |
 | Statusbar shows `⎇ —` | Not a git repo, or `git` is not on PATH (not an error) |
 
-### If the build says `Access is denied` (`os error 5`)
+### If a Rust build says `Access is denied` (`os error 5`)
 
-Cargo compiled a build script and Windows refused to start it. That is machine
-policy, not the code: `cargo`, `rustc`, and `node` run because they are
-installed and signed, while files you just compiled are neither. Separate the
-two possible rules with a hello-world in two folders:
+Windows refuses to *start* what cargo just built. That is machine policy, not
+the code: `cargo`, `rustc`, and `node` run because they are installed and known,
+while a freshly linked binary is neither. The Node host exists for exactly this
+case — `npm start` needs no compiled binary at all.
+
+To learn which rule is in play, run a hello-world in two folders:
 
 ```powershell
 cargo new --bin "$env:TEMP\muis-probe"
@@ -239,31 +195,31 @@ cargo run --release --target x86_64-pc-windows-gnu --manifest-path "C:\Repos\mui
 | Result | Rule | What works |
 |---|---|---|
 | Both run | transient: a scanner held the file | retry the build |
-| `$env:TEMP` runs, repo folder denied | path-based (AppLocker) | build from an allowlisted folder, e.g. `%USERPROFILE%\muis` |
-| Both denied | content-based (Defender ASR "block untrusted executables", or an EDR rule) | only an IT exclusion or an elevated shell gets past it — no source change can |
+| `%TEMP%` runs, other folder denied | path-based (AppLocker) | build from an allowlisted folder, or use the Node host |
+| Both denied | content-based (Defender ASR, WDAC, EDR) | only an IT exclusion gets past it; otherwise use the Node host |
 
 ### Filing a bug from that machine
 
-`--testmode` reproduces without touching a real layout, and `MUIS_LOG=debug`
-raises log verbosity. This collects everything into the clipboard for an issue:
+`npm start -- --testmode` reproduces without touching a real layout, and
+`MUIS_LOG=debug` raises verbosity. This collects the useful facts onto the
+clipboard:
 
 ```powershell
 & {
-  "muis-server issue report"
+  "muis issue report"
   "date:  $(Get-Date -Format o)"
-  "rust:  $(rustc --version)"
-  "cargo: $(cargo --version)"
-  "node:  $(node --version 2>$null)"
+  "host:  node $(node --version 2>$null) / cargo $(cargo --version 2>$null)"
   "dist:  $(Test-Path .\src-ui\dist\index.html)"
+  "node-pty: $(node -e 'require("node-pty");console.log("ok")' 2>$null)"
   ""
   Get-Content "$env:LOCALAPPDATA\muis\logs\muis-server.log" -Tail 40 -ErrorAction SilentlyContinue
 } | Set-Clipboard
 ```
 
-With `muis.portable` the log is `<exe folder>\data\state\logs\muis-server.log`.
-In the browser, F12 → `copy(JSON.stringify(window.__muisErrors))` dumps the
-errors the frontend recorded, and `window.__muisDebug()` snapshots tabs and
-sessions.
+With `MUIS_HOME` or `muis.portable`, the log is under
+`<that folder>\state\logs\muis-server.log`. In the browser, F12 →
+`copy(JSON.stringify(window.__muisErrors))` dumps the errors the frontend
+recorded, and `window.__muisDebug()` snapshots tabs and sessions.
 
 ## Use
 
