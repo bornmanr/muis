@@ -444,8 +444,18 @@ describe("muis chrome", () => {
       () => document.querySelector(".term-wrap").getBoundingClientRect().width,
     );
 
-    await press({ key: "b", code: "KeyB", ctrlKey: true, shiftKey: true });
+    // The toolbar button next to settings opens it without a chord.
+    const paneToggle = await driver.findElement(By.css(".pane-toggle"));
+    await paneToggle.click();
     const pane = await driver.wait(until.elementLocated(By.css(".preview")), 3000);
+    await driver.wait(async () => pane.isDisplayed(), 3000);
+    assert.match((await paneToggle.getAttribute("class")) || "", /on/);
+    // ... and the same button closes it again.
+    await paneToggle.click();
+    await driver.wait(async () => !(await pane.isDisplayed()), 3000);
+    assert.doesNotMatch((await paneToggle.getAttribute("class")) || "", /on/);
+
+    await press({ key: "b", code: "KeyB", ctrlKey: true, shiftKey: true });
     await driver.wait(async () => pane.isDisplayed(), 3000);
 
     // Side by side, not stacked: the pane starts where the terminal column

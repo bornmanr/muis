@@ -446,10 +446,16 @@ newTabBtn.addEventListener("click", () => {
   const ws = store.currentWorkspace();
   if (ws) addShellTab(ws);
 });
-const gearBtn = el("button", "newtab settings", "⚙");
+const gearBtn = el("button", "newtab settings", "⚙") as HTMLButtonElement;
 gearBtn.title = "Settings (ctrl + ,)";
 gearBtn.addEventListener("click", () => openSettings());
-tabbar.append(newTabBtn, tabScroller, gearBtn);
+const paneBtn = document.createElement("button");
+paneBtn.className = "newtab pane-toggle";
+paneBtn.title = "Browser pane (ctrl+shift+b)";
+paneBtn.setAttribute("aria-label", "Browser pane");
+paneBtn.append(paneIcon());
+paneBtn.addEventListener("click", () => togglePreview());
+tabbar.append(newTabBtn, tabScroller, paneBtn, gearBtn);
 const termWrap = document.createElement("div");
 termWrap.className = "term-wrap";
 
@@ -984,6 +990,29 @@ function el(tag: string, cls: string, text?: string): HTMLElement {
   e.className = cls;
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+/**
+ * Toolbar icon for the browser pane: a window split into terminal and page.
+ * Drawn rather than typed so it renders the same in every font fallback.
+ */
+function paneIcon(): SVGSVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("aria-hidden", "true");
+  const frame = document.createElementNS(ns, "rect");
+  frame.setAttribute("x", "1.75");
+  frame.setAttribute("y", "2.75");
+  frame.setAttribute("width", "12.5");
+  frame.setAttribute("height", "10.5");
+  frame.setAttribute("rx", "2");
+  const split = document.createElementNS(ns, "path");
+  split.setAttribute("d", "M9.25 2.75v10.5");
+  svg.append(frame, split);
+  return svg;
 }
 
 let appliedTheme: string | null = null;
@@ -1673,6 +1702,7 @@ function refitActive(): void {
  */
 function renderPreview(): void {
   previewSlot.style.display = previewOpen ? "flex" : "none";
+  paneBtn.classList.toggle("on", previewOpen);
   const loaded = previewOpen && previewUrl !== "";
   previewEmpty.style.display = loaded ? "none" : "flex";
   const want = loaded ? previewUrl : "about:blank";
