@@ -6,10 +6,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import plugin, {
+  agentCommand,
   createMuisPlugin,
   createPreviewTool,
   permissionOf,
   previewUrl,
+  runHelper,
   SESSION_EVENTS,
 } from "../../crates/muis-shell/opencode-plugin/muis.js";
 
@@ -330,7 +332,12 @@ test("the browser pane tool opens only absolute http(s) URLs", () => {
 
 test("muis_open_url asks muis-agent to open the pane for this session", async () => {
   const calls = [];
-  const tool = createPreviewTool({ openUrl: (url, session) => calls.push([url, session]) });
+  const tool = createPreviewTool({
+    openUrl: async (url, session) => {
+      calls.push([url, session]);
+      return null;
+    },
+  });
   assert.equal(tool.name, "muis_open_url");
   assert.deepEqual(tool.input.required, ["url"]);
 
@@ -343,6 +350,63 @@ test("muis_open_url asks muis-agent to open the pane for this session", async ()
   const refused = await tool.execute({ url: "file:///etc/passwd" }, { sessionID: "ses_pane" });
   assert.deepEqual(calls, []);
   assert.match(refused, /needs an http\(s\) URL/);
+});
+
+test("muis_open_url reports a shell it could not reach instead of claiming success", async () => {
+  const tool = createPreviewTool({
+    openUrl: async () => "Could not open http://localhost:5173/: muis is not running.",
+  });
+  const answer = await tool.execute({ url: "http://localhost:5173/" }, {});
+  assert.equal(answer, "Could not open http://localhost:5173/: muis is not running.");
+  assert.doesNotMatch(answer, /^Opened /);
+
+  // A throwing helper is still a tool result, never a crash.
+  const broken = createPreviewTool({
+    openUrl: async () => {
+      throw new Error("spawn ENOENT");
+    },
+  });
+  assert.match(await broken.execute({ url: "http://x/" }, {}), /spawn ENOENT/);
+});
+
+test("agentCommand picks the sidecar, the single-exe build, or PATH", () => {
+  assert.deepEqual(agentCommand({ MUIS_AGENT_BIN: "/opt/muis-agent" }), {
+    command: "/opt/muis-agent",
+    args: [],
+  });
+  assert.deepEqual(agentCommand({ MUIS_BIN: "/usr/bin/muis" }), {
+    command: "/usr/bin/muis",
+    args: ["--muis-agent"],
+  });
+  assert.deepEqual(agentCommand({}), { command: "muis-agent", args: [] });
+});
+
+test("runHelper resolves the real exit status and stderr", async () => {
+  const ok = await runHelper(process.execPath, ["-e", "process.exit(0)"]);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.code, 0);
+
+  const failed = await runHelper(process.execPath, [
+    "-e",
+    'console.error("could not reach muis"); process.exit(1)',
+  ]);
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, 1);
+  assert.match(failed.reason, /could not reach muis/);
+
+  // An older helper answers with its own error and then usage; only the
+  // error line is useful to hand back to the model.
+  const usage = await runHelper(process.execPath, [
+    "-e",
+    'console.error("muis-agent: unknown command: open"); console.error("usage: muis-agent open <URL>"); process.exit(2)',
+  ]);
+  assert.equal(usage.code, 2);
+  assert.equal(usage.reason, "muis-agent: unknown command: open");
+
+  const missing = await runHelper("/nonexistent/muis-agent-xyz", ["open", "http://x/"]);
+  assert.equal(missing.ok, false);
+  assert.equal(missing.code, null);
+  assert.ok(missing.reason.length > 0);
 });
 
 test("setup registers the pane tool when opencode has a tool domain", async () => {
