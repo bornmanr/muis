@@ -71,12 +71,62 @@ function send(command, args) {
   }
 }
 
+/**
+ * Where the agent helper lives: a packaged sidecar (`MUIS_AGENT_BIN`), the
+ * single-exe build (`MUIS_BIN` plus its mode flag), or PATH.
+ */
+export function agentCommand(env = process.env) {
+  const agentBin = env.MUIS_AGENT_BIN;
+  if (agentBin) return { command: agentBin, args: [] };
+  const bin = env.MUIS_BIN;
+  return bin
+    ? { command: bin, args: ["--muis-agent"] }
+    : { command: "muis-agent", args: [] };
+}
+
 /** Report a session id to muis (`muis-agent`, or the single-exe build). */
 function reportAgent(args) {
-  const agentBin = process.env.MUIS_AGENT_BIN;
-  if (agentBin) return send(agentBin, args);
-  const bin = process.env.MUIS_BIN;
-  send(bin || "muis-agent", bin ? ["--muis-agent", ...args] : args);
+  const { command, args: prefix } = agentCommand();
+  send(command, [...prefix, ...args]);
+}
+
+/**
+ * Run one helper and wait for it. Only the tool path waits: a tool that
+ * claims the pane opened while muis is closed teaches the model something
+ * false, so it needs the exit status.
+ */
+export function runHelper(command, args) {
+  return new Promise((resolve) => {
+    let stderr = "";
+    let child;
+    try {
+      child = spawn(command, args, {
+        stdio: ["ignore", "ignore", "pipe"],
+        windowsHide: true,
+        shell: process.platform === "win32",
+      });
+    } catch (error) {
+      resolve({ ok: false, code: null, reason: String(error?.message ?? error) });
+      return;
+    }
+    child.stderr?.on("data", (chunk) => {
+      if (stderr.length < 400) stderr += String(chunk);
+    });
+    child.on("error", (error) =>
+      resolve({ ok: false, code: null, reason: String(error?.message ?? error) }),
+    );
+    child.on("close", (code) => resolve({ ok: code === 0, code, reason: helperReason(stderr) }));
+  });
+}
+
+/** The useful line of a helper's stderr: its own error, not the usage tail. */
+function helperReason(stderr) {
+  const lines = stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const own = lines.find((line) => line.startsWith("muis-agent:"));
+  return (own ?? lines[0] ?? "").slice(0, 200);
 }
 
 /**
@@ -110,13 +160,26 @@ export function previewUrl(raw) {
   }
 }
 
-/** Ask muis to show a URL in its browser pane (`muis-agent open`). */
-function openUrl(url, session) {
+/**
+ * Ask muis to show a URL in its browser pane (`muis-agent open`). Resolves
+ * to null when the helper accepted it, or to a message the model can act on.
+ * Delivery is the limit of what we can check: the shell answers no ack, so a
+ * muis too old to know `open-url` looks like success here.
+ */
+async function openUrl(url, session) {
   const args = ["open", url];
   if (typeof session === "string" && session.startsWith("ses_")) {
     args.push("--session", session);
   }
-  reportAgent(args);
+  const { command, args: prefix } = agentCommand();
+  const result = await runHelper(command, [...prefix, ...args]);
+  if (result.ok) return null;
+  const reason = result.reason || "";
+  if (/could not reach muis/i.test(reason)) return `Could not open ${url}: muis is not running.`;
+  if (result.code === null) {
+    return `Could not open ${url}: cannot run ${command}${reason ? ` (${reason})` : ""}.`;
+  }
+  return `Could not open ${url}: muis-agent exited ${result.code}${reason ? ` (${reason})` : ""}.`;
 }
 
 /**
@@ -143,8 +206,12 @@ export function createPreviewTool({ openUrl: request = openUrl } = {}) {
     async execute(args, context) {
       const url = previewUrl(args?.url);
       if (!url) return `muis_open_url needs an http(s) URL, got: ${String(args?.url ?? "")}`;
-      request(url, context?.sessionID);
-      return `Opened ${url} in the muis browser pane.`;
+      try {
+        const failure = await request(url, context?.sessionID);
+        return failure || `Opened ${url} in the muis browser pane.`;
+      } catch (error) {
+        return `Could not open ${url}: ${String(error?.message ?? error)}`;
+      }
     },
   };
 }

@@ -613,6 +613,11 @@ mod tests {
         assert!(OPENCODE_PLUGIN_SRC.contains("ctx.tool?.transform"));
         assert!(OPENCODE_PLUGIN_SRC.contains("tools.add("));
         assert!(OPENCODE_PLUGIN_SRC.contains("[\"open\", url]"));
+        // The tool must wait for the helper and say so when it fails: a
+        // fire-and-forget call reports success with no muis running.
+        assert!(OPENCODE_PLUGIN_SRC.contains("await runHelper("));
+        assert!(OPENCODE_PLUGIN_SRC.contains("Could not open"));
+        assert!(OPENCODE_PLUGIN_SRC.contains("failure ||"));
     }
 
     #[test]
