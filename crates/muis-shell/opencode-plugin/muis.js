@@ -1,4 +1,4 @@
-// muis-plugin v9
+// muis-plugin v10
 // muis opencode server plugin: notify muis when a turn finishes or when
 // opencode pauses for input, so the tab gets the waiting mark + toast, and
 // report the exact session id as a fallback when the TUI plugin is
@@ -8,6 +8,9 @@
 // permission, or a replied form mean opencode picked the work back up, so
 // muis clears the tab's waiting mark. The mark therefore survives merely
 // looking at the tab and only goes when the user replies or the tab closes.
+//
+// The `muis_open_url` tool lets the agent show a preview in muis's browser
+// pane, docked next to the terminal it is driving.
 //
 // Every report carries the opencode session id. The server plugin runs in
 // the shared `opencode serve` process, so `MUIS_TAB_ID` there belongs to
@@ -91,6 +94,59 @@ function projectOf(directory) {
   return typeof directory === "string" && directory
     ? directory.replace(/\/+$/, "").split("/").pop()
     : "";
+}
+
+/** True for absolute http(s) URLs; the pane and the CLI accept only these. */
+export function previewUrl(raw) {
+  if (typeof raw !== "string") return "";
+  const url = raw.trim();
+  if (!/^https?:\/\/\S+$/i.test(url)) return "";
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return parsed.hostname ? url : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Ask muis to show a URL in its browser pane (`muis-agent open`). */
+function openUrl(url, session) {
+  const args = ["open", url];
+  if (typeof session === "string" && session.startsWith("ses_")) {
+    args.push("--session", session);
+  }
+  reportAgent(args);
+}
+
+/**
+ * Tool definition for the browser pane. The helper is injected so the
+ * behavior is testable outside opencode; `execute` returns a short note the
+ * model can read back.
+ */
+export function createPreviewTool({ openUrl: request = openUrl } = {}) {
+  return {
+    name: "muis_open_url",
+    description:
+      "Show a URL in muis's browser pane next to the terminal. Use it to preview a dev server or a local HTML page you changed.",
+    input: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Absolute http(s) URL, e.g. http://localhost:5173/.",
+        },
+      },
+      required: ["url"],
+      additionalProperties: false,
+    },
+    async execute(args, context) {
+      const url = previewUrl(args?.url);
+      if (!url) return `muis_open_url needs an http(s) URL, got: ${String(args?.url ?? "")}`;
+      request(url, context?.sessionID);
+      return `Opened ${url} in the muis browser pane.`;
+    },
+  };
 }
 
 /** The permission or action name carried by a `permission.asked` event. */
@@ -240,6 +296,14 @@ export default {
   async setup(ctx) {
     const plugin = createMuisPlugin({ reportAgent, notify });
     await ctx.session.hook("prompt", (event) => plugin.prompt(event?.sessionID));
+    // Expose the browser pane to the model. Builds without the tool domain
+    // still get notifications; the pane is also reachable via
+    // `muis-agent open`.
+    try {
+      await ctx.tool?.transform((tools) => tools.add(createPreviewTool({ openUrl })));
+    } catch {
+      // No tool surface in this opencode build.
+    }
     const controller = new AbortController();
     void consume(ctx.event.subscribe({ types: SESSION_EVENTS, signal: controller.signal }), plugin);
     return () => controller.abort();

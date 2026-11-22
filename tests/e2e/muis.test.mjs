@@ -438,4 +438,92 @@ describe("muis chrome", () => {
     assert.equal((await backgrounded.findElements(By.css(".s-badge"))).length, 0);
     await shot("21-idle-session-no-dot");
   });
+
+  it("docks an html preview to the right of the terminal", async () => {
+    const termWidthBefore = await driver.executeScript(
+      () => document.querySelector(".term-wrap").getBoundingClientRect().width,
+    );
+
+    // The toolbar button next to settings opens it without a chord.
+    const paneToggle = await driver.findElement(By.css(".pane-toggle"));
+    await paneToggle.click();
+    const pane = await driver.wait(until.elementLocated(By.css(".preview")), 3000);
+    await driver.wait(async () => pane.isDisplayed(), 3000);
+    assert.match((await paneToggle.getAttribute("class")) || "", /on/);
+    // ... and the same button closes it again.
+    await paneToggle.click();
+    await driver.wait(async () => !(await pane.isDisplayed()), 3000);
+    assert.doesNotMatch((await paneToggle.getAttribute("class")) || "", /on/);
+
+    await press({ key: "b", code: "KeyB", ctrlKey: true, shiftKey: true });
+    await driver.wait(async () => pane.isDisplayed(), 3000);
+
+    // Side by side, not stacked: the pane starts where the terminal column
+    // ends, and its top is the terminal's top, not below the statusbar.
+    const layout = await driver.executeScript(() => {
+      const center = document.querySelector(".center").getBoundingClientRect();
+      const preview = document.querySelector(".preview").getBoundingClientRect();
+      const term = document.querySelector(".term-wrap").getBoundingClientRect();
+      return {
+        centerRight: center.right,
+        previewLeft: preview.left,
+        previewTop: preview.top,
+        previewWidth: preview.width,
+        termTop: term.top,
+        centerTop: center.top,
+        termWidth: term.width,
+      };
+    });
+    assert.ok(layout.previewWidth >= 320, `pane too narrow: ${JSON.stringify(layout)}`);
+    assert.ok(
+      Math.abs(layout.previewLeft - layout.centerRight) <= 2,
+      `pane is not docked to the right: ${JSON.stringify(layout)}`,
+    );
+    assert.ok(
+      Math.abs(layout.previewTop - layout.centerTop) <= 2,
+      `pane is not in the terminal row: ${JSON.stringify(layout)}`,
+    );
+    assert.ok(
+      layout.termWidth < termWidthBefore,
+      "the terminal did not give up width to the pane",
+    );
+    // The address bar takes focus so a URL can be typed straight away.
+    const input = await driver.findElement(By.css(".preview-url"));
+    assert.ok(
+      ((await driver.switchTo().activeElement().then((el) => el.getAttribute("class"))) || "").includes(
+        "preview-url",
+      ),
+    );
+    await shot("22-browser-pane-open");
+
+    await input.sendKeys("localhost:5173");
+    await input.sendKeys(Key.ENTER);
+    const frame = await driver.findElement(By.css(".preview-frame"));
+    await driver.wait(
+      async () => (await frame.getAttribute("src")) === "http://localhost:5173/",
+      3000,
+    );
+
+    // Hostile input from an address bar (or an agent) never loads.
+    await input.clear();
+    await input.sendKeys("javascript:alert(1)");
+    await input.sendKeys(Key.ENTER);
+    assert.match((await input.getAttribute("class")) || "", /bad/);
+    assert.equal(await frame.getAttribute("src"), "http://localhost:5173/");
+    await shot("23-browser-pane-rejects-scheme");
+
+    // The pane belongs to the window, so it survives tab churn.
+    await press({ key: "t", code: "KeyT", ctrlKey: true });
+    assert.ok(await pane.isDisplayed());
+    assert.equal(await frame.getAttribute("src"), "http://localhost:5173/");
+
+    await driver.findElement(By.css(".preview-head .preview-btn:last-child")).click();
+    await driver.wait(async () => !(await pane.isDisplayed()), 3000);
+    await assertOneVisibleTerminal();
+    const termWidthAfter = await driver.executeScript(
+      () => document.querySelector(".term-wrap").getBoundingClientRect().width,
+    );
+    assert.ok(termWidthAfter >= termWidthBefore - 2, "the terminal did not get its width back");
+    await shot("24-browser-pane-closed");
+  });
 });

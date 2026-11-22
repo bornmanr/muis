@@ -7,7 +7,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import plugin, {
   createMuisPlugin,
+  createPreviewTool,
   permissionOf,
+  previewUrl,
   SESSION_EVENTS,
 } from "../../crates/muis-shell/opencode-plugin/muis.js";
 
@@ -315,4 +317,54 @@ test("a prompt reply clears the mark for its own session", () => {
     "agent session ses_prompt",
     "notify --running --session ses_prompt",
   ]);
+});
+
+test("the browser pane tool opens only absolute http(s) URLs", () => {
+  assert.equal(previewUrl("  http://localhost:5173/  "), "http://localhost:5173/");
+  assert.equal(previewUrl("https://example.com/a"), "https://example.com/a");
+  assert.equal(previewUrl("localhost:5173"), "");
+  assert.equal(previewUrl("javascript:alert(1)"), "");
+  assert.equal(previewUrl("file:///etc/passwd"), "");
+  assert.equal(previewUrl(undefined), "");
+});
+
+test("muis_open_url asks muis-agent to open the pane for this session", async () => {
+  const calls = [];
+  const tool = createPreviewTool({ openUrl: (url, session) => calls.push([url, session]) });
+  assert.equal(tool.name, "muis_open_url");
+  assert.deepEqual(tool.input.required, ["url"]);
+
+  const answer = await tool.execute({ url: "http://localhost:5173/" }, { sessionID: "ses_pane" });
+  assert.deepEqual(calls, [["http://localhost:5173/", "ses_pane"]]);
+  assert.match(answer, /Opened http:\/\/localhost:5173\//);
+
+  // Hostile input never reaches the helper.
+  calls.length = 0;
+  const refused = await tool.execute({ url: "file:///etc/passwd" }, { sessionID: "ses_pane" });
+  assert.deepEqual(calls, []);
+  assert.match(refused, /needs an http\(s\) URL/);
+});
+
+test("setup registers the pane tool when opencode has a tool domain", async () => {
+  const added = [];
+  const ctx = {
+    session: { hook: async () => {} },
+    tool: { transform: async (fn) => fn({ add: (def) => added.push(def) }) },
+    event: { subscribe: () => (async function* () {})() },
+  };
+  const cleanup = await plugin.setup(ctx);
+  assert.deepEqual(
+    added.map((t) => t.name),
+    ["muis_open_url"],
+  );
+  assert.equal(typeof cleanup, "function");
+});
+
+test("setup still loads on a build without the tool domain", async () => {
+  const ctx = {
+    session: { hook: async () => {} },
+    event: { subscribe: () => (async function* () {})() },
+  };
+  const cleanup = await plugin.setup(ctx);
+  assert.equal(typeof cleanup, "function");
 });

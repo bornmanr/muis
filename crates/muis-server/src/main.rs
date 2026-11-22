@@ -143,6 +143,7 @@ async fn start(options: Options, token: Arc<String>, socket: String) -> Result<(
             ClientRequest::Notify(req) => ("muis-notify", serde_json::to_value(req)),
             ClientRequest::AgentSession(req) => ("muis-agent-session", serde_json::to_value(req)),
             ClientRequest::AgentActivity(req) => ("muis-agent-activity", serde_json::to_value(req)),
+            ClientRequest::OpenUrl(req) => ("muis-open-url", serde_json::to_value(req)),
         };
         let Ok(payload) = payload else {
             return;

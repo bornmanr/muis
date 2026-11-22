@@ -14,6 +14,8 @@ export type ShortcutAction =
   | { type: "switch-tab"; index: number }
   | { type: "cycle-tab"; delta: number }
   | { type: "cycle-session"; delta: number }
+  | { type: "toggle-preview" }
+  | { type: "focus-preview" }
   | { type: "close-overlay" };
 
 export interface KeyLike {
@@ -33,6 +35,8 @@ const SIMPLE_ACTIONS = new Set([
   "focus-terminal",
   "open-settings",
   "command-palette",
+  "toggle-preview",
+  "focus-preview",
   "close-overlay",
 ]);
 
@@ -76,6 +80,9 @@ export function resolveShortcut(e: KeyLike, overrides?: Record<string, string>):
   if (ctrlShift && key === "F12") return { type: "focus-terminal" };
   if (plainCtrl && key === ",") return { type: "open-settings" };
   if (ctrlShift && lower === "p") return { type: "command-palette" };
+  // Browser pane: ctrl+shift+b toggles it, ctrl+shift+u jumps to its address.
+  if (ctrlShift && lower === "b") return { type: "toggle-preview" };
+  if (ctrlShift && lower === "u") return { type: "focus-preview" };
 
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
     const m = /^(?:Digit)?([1-9])$/.exec(e.code ?? "");
