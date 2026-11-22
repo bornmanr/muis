@@ -9,8 +9,10 @@ import plugin, {
   agentCommand,
   createMuisPlugin,
   createPreviewTool,
+  needsShell,
   permissionOf,
   previewUrl,
+  quoteForCmd,
   runHelper,
   SESSION_EVENTS,
 } from "../../crates/muis-shell/opencode-plugin/muis.js";
@@ -367,6 +369,22 @@ test("muis_open_url reports a shell it could not reach instead of claiming succe
     },
   });
   assert.match(await broken.execute({ url: "http://x/" }, {}), /spawn ENOENT/);
+});
+
+test("helper spawning only uses a Windows shell for .cmd shims", () => {
+  assert.equal(needsShell("muis-agent", "win32"), false);
+  assert.equal(needsShell("C:\\Program Files\\muis\\muis.exe", "win32"), false);
+  assert.equal(needsShell("muis-agent.cmd", "win32"), true);
+  assert.equal(needsShell("muis-agent.BAT", "win32"), true);
+  assert.equal(needsShell("muis-agent.cmd", "linux"), false);
+});
+
+test("quoteForCmd keeps a URL with a query string in one argument", () => {
+  const url = "http://localhost:5173/?a=1&b=2";
+  assert.equal(quoteForCmd(url), `"${url}"`);
+  assert.equal(quoteForCmd("plain"), "plain");
+  assert.equal(quoteForCmd("a b"), '"a b"');
+  assert.equal(quoteForCmd('say "hi"'), '"say ""hi"""');
 });
 
 test("agentCommand picks the sidecar, the single-exe build, or PATH", () => {

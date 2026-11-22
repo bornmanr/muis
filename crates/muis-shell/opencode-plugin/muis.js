@@ -54,16 +54,37 @@ export const SESSION_EVENTS = [
   "permission.rejected",
 ];
 
+/**
+ * Whether a helper needs to go through the Windows shell. Node joins the
+ * command and its arguments without quoting when a shell is used, so a URL
+ * carrying `&` would be split by cmd.exe. Only `.cmd`/`.bat` shims need that
+ * path: the packaged helpers are executables, and a bare name like
+ * `muis-agent` is resolved by CreateProcess, which appends `.exe`.
+ */
+export function needsShell(command, platform = process.platform) {
+  return platform === "win32" && /\.(cmd|bat)$/i.test(command);
+}
+
+/** Quote one argument for cmd.exe; only used on the shell path. */
+export function quoteForCmd(arg) {
+  if (!/[ \t&|<>^()]/.test(arg)) return arg;
+  return `"${arg.replace(/"/g, '""')}"`;
+}
+
+/** Spawn a muis helper with the right shell decision for its command. */
+function spawnHelper(command, args, options) {
+  const shell = needsShell(command);
+  return spawn(command, shell ? args.map(quoteForCmd) : args, {
+    windowsHide: true,
+    shell,
+    ...options,
+  });
+}
+
 /** Fire one helper and never block opencode. */
 function send(command, args) {
   try {
-    // Windows resolves `.cmd` shims only through a shell, and the browser
-    // host hands us exactly that file via `MUIS_BIN`.
-    const child = spawn(command, args, {
-      stdio: "ignore",
-      windowsHide: true,
-      shell: process.platform === "win32",
-    });
+    const child = spawnHelper(command, args, { stdio: "ignore" });
     child.on("error", () => {});
     child.unref();
   } catch {
@@ -100,11 +121,7 @@ export function runHelper(command, args) {
     let stderr = "";
     let child;
     try {
-      child = spawn(command, args, {
-        stdio: ["ignore", "ignore", "pipe"],
-        windowsHide: true,
-        shell: process.platform === "win32",
-      });
+      child = spawnHelper(command, args, { stdio: ["ignore", "ignore", "pipe"] });
     } catch (error) {
       resolve({ ok: false, code: null, reason: String(error?.message ?? error) });
       return;

@@ -618,6 +618,11 @@ mod tests {
         assert!(OPENCODE_PLUGIN_SRC.contains("await runHelper("));
         assert!(OPENCODE_PLUGIN_SRC.contains("Could not open"));
         assert!(OPENCODE_PLUGIN_SRC.contains("failure ||"));
+        // A blanket shell on Windows lets cmd.exe split a URL at `&`; only
+        // .cmd/.bat shims may take the shell path, with quoted arguments.
+        assert!(OPENCODE_PLUGIN_SRC.contains("needsShell("));
+        assert!(OPENCODE_PLUGIN_SRC.contains("quoteForCmd("));
+        assert!(!OPENCODE_PLUGIN_SRC.contains("shell: process.platform == \"win32\""));
     }
 
     #[test]
