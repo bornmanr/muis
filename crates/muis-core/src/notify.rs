@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 pub const AGENT_KIND: &str = "agent-session";
 pub const ACTIVITY_KIND: &str = "agent-activity";
+pub const OPEN_KIND: &str = "open-url";
 pub const ACTIVITY_RUNNING: &str = "running";
 
 /// One notification request from a client.
@@ -95,12 +96,63 @@ impl AgentSessionRequest {
     }
 }
 
+/// Ask the terminal to show a URL in its browser pane. The pane is part of
+/// the window, so an agent can put a local preview next to the terminal it
+/// is driving instead of stealing focus with a system browser.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenUrlRequest {
+    pub kind: String,
+    pub url: String,
+    /// Originating tab, injected into ptys as `MUIS_TAB_ID`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+    /// opencode session the preview belongs to, routed like
+    /// `NotifyRequest::session`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+}
+
+impl OpenUrlRequest {
+    /// Build a request, or `None` when the URL is not http(s). Callers never
+    /// get to hand the frontend a `javascript:` or `file:` URL.
+    pub fn new(url: &str, tab_id: Option<String>, session: Option<String>) -> Option<Self> {
+        if !valid_http_url(url) {
+            return None;
+        }
+        Some(Self {
+            kind: OPEN_KIND.to_string(),
+            url: url.trim().to_string(),
+            tab_id,
+            session,
+        })
+    }
+}
+
 /// Every request a local client may send.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientRequest {
     Notify(NotifyRequest),
     AgentSession(AgentSessionRequest),
     AgentActivity(ActivityRequest),
+    OpenUrl(OpenUrlRequest),
+}
+
+/// True for http(s) URLs with a non-empty host and no control characters.
+/// Deliberately scheme-only: the frontend and the OS opener both get the
+/// same guarantee, and nothing here can turn into a shell invocation.
+pub fn valid_http_url(url: &str) -> bool {
+    let url = url.trim();
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"));
+    let Some(rest) = rest else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    !host.is_empty() && !host.starts_with(':')
 }
 
 /// True for the only session ids muis will ever write to a shell.
@@ -159,6 +211,9 @@ pub fn decode_client(line: &str) -> Option<ClientRequest> {
         Some(ACTIVITY_KIND) => serde_json::from_value(value)
             .ok()
             .map(ClientRequest::AgentActivity),
+        Some(OPEN_KIND) => serde_json::from_value(value)
+            .ok()
+            .map(ClientRequest::OpenUrl),
         _ => serde_json::from_value(value).ok().map(ClientRequest::Notify),
     }
 }
@@ -183,6 +238,11 @@ pub fn send_agent(socket: &str, req: &AgentSessionRequest) -> io::Result<()> {
 
 /// Send one agent-activity report to a running muis.
 pub fn send_activity(socket: &str, req: &ActivityRequest) -> io::Result<()> {
+    send_value(socket, &serde_json::to_value(req)?)
+}
+
+/// Send one open-url request to a running muis.
+pub fn send_open_url(socket: &str, req: &OpenUrlRequest) -> io::Result<()> {
     send_value(socket, &serde_json::to_value(req)?)
 }
 
@@ -301,6 +361,60 @@ mod tests {
             rx.recv_timeout(Duration::from_secs(5)).unwrap(),
             ClientRequest::AgentActivity(running)
         );
+
+        let open = OpenUrlRequest::new(
+            "http://127.0.0.1:5173/",
+            Some("tab-1".into()),
+            Some("ses_x1".into()),
+        )
+        .unwrap();
+        send_open_url(&socket, &open).unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            ClientRequest::OpenUrl(open)
+        );
+    }
+
+    #[test]
+    fn open_url_requests_decode_by_kind_and_keep_their_route() {
+        let req = OpenUrlRequest::new(
+            " https://localhost:8443/preview?a=1 ",
+            Some("t3".into()),
+            Some("ses_open".into()),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("open-url"));
+        assert_eq!(
+            decode_client(&json),
+            Some(ClientRequest::OpenUrl(req.clone()))
+        );
+        // A bare URL still decodes; the route is optional.
+        assert_eq!(
+            decode_client(r#"{"kind":"open-url","url":"http://localhost:3000"}"#),
+            Some(ClientRequest::OpenUrl(
+                OpenUrlRequest::new("http://localhost:3000", None, None).unwrap()
+            ))
+        );
+    }
+
+    #[test]
+    fn open_url_only_accepts_http_and_https() {
+        assert!(valid_http_url("http://localhost:5173"));
+        assert!(valid_http_url("https://example.com/a/b?c=d#e"));
+        assert!(valid_http_url("  http://127.0.0.1:8000  "));
+
+        assert!(!valid_http_url(""));
+        assert!(!valid_http_url("localhost:5173"));
+        assert!(!valid_http_url("file:///etc/passwd"));
+        assert!(!valid_http_url("javascript:alert(1)"));
+        assert!(!valid_http_url("data:text/html,<h1>x</h1>"));
+        assert!(!valid_http_url("http://"));
+        assert!(!valid_http_url("http:///path"));
+        assert!(!valid_http_url("http://localhost:5173/\nrm -rf /"));
+
+        // The constructor refuses what the checker refuses.
+        assert!(OpenUrlRequest::new("file:///etc/passwd", None, None).is_none());
     }
 
     #[test]

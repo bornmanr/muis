@@ -61,6 +61,22 @@ describe("resolveShortcut", () => {
     });
   });
 
+  it("toggles the browser pane with ctrl+shift+b", () => {
+    expect(resolveShortcut(key({ key: "b", ctrlKey: true, shiftKey: true }))).toEqual({
+      type: "toggle-preview",
+    });
+    expect(resolveShortcut(key({ key: "u", ctrlKey: true, shiftKey: true }))).toEqual({
+      type: "focus-preview",
+    });
+    expect(resolveShortcut(key({ key: "b", ctrlKey: true }))).toBeNull();
+    // Both chords are overridable like any other chrome action.
+    expect(
+      resolveShortcut(key({ key: "o", ctrlKey: true, shiftKey: true }), {
+        "toggle-preview": "ctrl+shift+o",
+      }),
+    ).toEqual({ type: "toggle-preview" });
+  });
+
   it("cycles tabs with ctrl+tab and ctrl+shift+tab", () => {
     // Real events carry key "Tab"; accept code "Tab" too.
     expect(resolveShortcut(key({ key: "Tab", ctrlKey: true }))).toEqual({ type: "cycle-tab", delta: 1 });

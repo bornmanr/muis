@@ -39,6 +39,7 @@ import { RestorePump } from "./restore";
 import { expandHome, shortPath as shortPathOf } from "./paths";
 import { clockText } from "./clock";
 import { shouldFocusTerminal } from "./focus";
+import { clampPreviewWidth, defaultPreviewWidth, normalizeUrl } from "./browser";
 import muisIcon from "./assets/muis.png";
 import type { UiToWorker, WorkerToUi } from "./ipc";
 import {
@@ -204,6 +205,14 @@ interface CliAgentSession {
   tab_id?: string | null;
 }
 
+/** A `muis-agent open` request forwarded by the shell. */
+interface CliOpenUrl {
+  kind?: string;
+  url: string;
+  tab_id?: string | null;
+  session?: string | null;
+}
+
 /** Tabs whose restore launch already ran this session. */
 const agentLaunched = new Set<string>();
 /** Resume line injected per tab, so the shell's cmd-start for it is ignored. */
@@ -255,6 +264,7 @@ function subscribe<T>(event: string, handler: (payload: T) => void): void {
 subscribe<CliNotify>("muis-notify", handleNotifyRequest);
 subscribe<CliAgentSession>("muis-agent-session", handleAgentSession);
 subscribe<CliAgentActivity>("muis-agent-activity", handleAgentActivity);
+subscribe<CliOpenUrl>("muis-open-url", handleOpenUrl);
 
 /** View options; loaded from disk in init, edited in the settings dialog. */
 let cfg: AppConfig = defaultConfig();
@@ -446,7 +456,47 @@ termWrap.className = "term-wrap";
 const statusbar = document.createElement("div");
 statusbar.className = "statusbar";
 center.append(tabbar, termWrap, statusbar);
-mainRow.append(sidebar, center);
+
+// Browser pane: docked to the right of the terminal, empty until a URL is
+// opened by the user or by an agent (`muis-agent open`). It is a plain
+// iframe, so the pane works identically in the native shell and in
+// `muis serve`; sites that refuse framing get the "open externally" button.
+const previewSlot = document.createElement("div");
+previewSlot.className = "preview";
+previewSlot.style.display = "none";
+const previewGrip = el("div", "preview-grip");
+previewGrip.title = "Drag to resize, double-click to reset";
+const previewHead = document.createElement("div");
+previewHead.className = "preview-head";
+const previewReload = el("button", "preview-btn", "↻") as HTMLButtonElement;
+previewReload.title = "Reload";
+const previewUrlInput = document.createElement("input");
+previewUrlInput.className = "preview-url";
+previewUrlInput.type = "text";
+previewUrlInput.spellcheck = false;
+previewUrlInput.placeholder = "http://localhost:5173";
+previewUrlInput.setAttribute("aria-label", "Browser URL");
+const previewExternal = el("button", "preview-btn", "↗") as HTMLButtonElement;
+previewExternal.title = "Open in the system browser";
+const previewClose = el("button", "preview-btn", "×") as HTMLButtonElement;
+previewClose.title = "Close browser pane (ctrl+shift+b)";
+previewHead.append(previewReload, previewUrlInput, previewExternal, previewClose);
+const previewBody = document.createElement("div");
+previewBody.className = "preview-body";
+const previewFrame = document.createElement("iframe");
+previewFrame.className = "preview-frame";
+previewFrame.title = "Browser preview";
+previewFrame.setAttribute(
+  "sandbox",
+  "allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads",
+);
+previewFrame.setAttribute("referrerpolicy", "no-referrer");
+const previewEmpty = el("div", "preview-empty");
+previewEmpty.textContent =
+  "No page yet. Type a URL above, or let an agent open one with muis_open_url.";
+previewBody.append(previewEmpty, previewFrame);
+previewSlot.append(previewGrip, previewHead, previewBody);
+mainRow.append(sidebar, center, previewSlot);
 
 const panelSlot = document.createElement("div");
 panelSlot.className = "sidepanel";
@@ -1595,6 +1645,149 @@ function renderPanelSlot(): void {
   panelSlot.append(head, body);
 }
 
+/* ---------------- browser pane ---------------- */
+
+let previewOpen = false;
+/** Last page the pane was pointed at; survives closing so it can reopen. */
+let previewUrl = "";
+/** User-chosen pane width in px; 0 means "share of the window". */
+let previewWidth = 0;
+
+function applyPreviewWidth(): void {
+  const width = previewWidth > 0 ? previewWidth : defaultPreviewWidth(window.innerWidth);
+  previewSlot.style.width = `${clampPreviewWidth(width, window.innerWidth)}px`;
+}
+
+/** Terminals are sized from the DOM, so every layout change must refit. */
+function refitActive(): void {
+  const ws = store.currentWorkspace();
+  const active = ws?.tabs[ws.active];
+  const view = active ? views.get(active.id) : undefined;
+  if (!ws || !active || !view) return;
+  fitShown(ws.id, active, view);
+}
+
+/**
+ * Mirror the pane state into the DOM. A hidden or empty pane unloads its
+ * document, so a preview cannot keep playing audio after it is closed.
+ */
+function renderPreview(): void {
+  previewSlot.style.display = previewOpen ? "flex" : "none";
+  const loaded = previewOpen && previewUrl !== "";
+  previewEmpty.style.display = loaded ? "none" : "flex";
+  const want = loaded ? previewUrl : "about:blank";
+  if (previewFrame.getAttribute("src") !== want) previewFrame.src = want;
+}
+
+/** Show `raw` in the pane. Returns false for input that is not http(s). */
+function openPreview(raw: string, focus = false): boolean {
+  const url = normalizeUrl(raw);
+  if (!url) {
+    previewUrlInput.classList.add("bad");
+    return false;
+  }
+  previewUrlInput.classList.remove("bad");
+  previewUrlInput.value = url;
+  previewUrl = url;
+  previewOpen = true;
+  applyPreviewWidth();
+  renderPreview();
+  refitActive();
+  if (focus) previewUrlInput.focus();
+  return true;
+}
+
+function closePreview(): void {
+  if (!previewOpen) return;
+  previewOpen = false;
+  renderPreview();
+  refitActive();
+}
+
+function focusPreview(): void {
+  if (!previewOpen) {
+    previewOpen = true;
+    applyPreviewWidth();
+    renderPreview();
+    refitActive();
+  }
+  previewUrlInput.focus();
+  previewUrlInput.select();
+}
+
+/** Toggle the pane; closing hands the keyboard back to the terminal. */
+function togglePreview(): void {
+  if (previewOpen) {
+    closePreview();
+    focusActiveTerminal();
+  } else {
+    focusPreview();
+  }
+}
+
+/** Open a URL outside muis; the pane keeps working when a site blocks frames. */
+function openExternally(url: string): void {
+  if (!url) return;
+  shellCall("open_url", { url }).catch(() => {
+    window.open(url, "_blank", "noopener");
+  });
+}
+
+/** A `muis-agent open` request forwarded by the shell. */
+function handleOpenUrl(req: CliOpenUrl): void {
+  if (!req?.url) return;
+  if (!openPreview(req.url)) return;
+  // Never take keyboard focus here: the agent is usually mid-turn.
+  reportDebugStage("preview-opened", { url: previewUrl, tab: req.tab_id ?? null });
+}
+
+previewClose.addEventListener("click", () => {
+  closePreview();
+  focusActiveTerminal();
+});
+previewReload.addEventListener("click", () => {
+  if (!previewUrl) return;
+  previewFrame.src = "about:blank";
+  window.setTimeout(() => {
+    if (previewOpen && previewUrl) previewFrame.src = previewUrl;
+  }, 0);
+});
+previewExternal.addEventListener("click", () => openExternally(previewUrl));
+previewUrlInput.addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (e.key === "Enter") {
+    e.preventDefault();
+    openPreview(previewUrlInput.value);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    previewUrlInput.value = previewUrl;
+    previewUrlInput.classList.remove("bad");
+    focusActiveTerminal();
+  }
+});
+previewUrlInput.addEventListener("input", () => previewUrlInput.classList.remove("bad"));
+previewGrip.addEventListener("dblclick", () => {
+  previewWidth = 0;
+  applyPreviewWidth();
+  refitActive();
+});
+previewGrip.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  const startX = e.clientX;
+  const startWidth = previewWidth > 0 ? previewWidth : defaultPreviewWidth(window.innerWidth);
+  const move = (ev: PointerEvent): void => {
+    previewWidth = clampPreviewWidth(startWidth + (startX - ev.clientX), window.innerWidth);
+    applyPreviewWidth();
+  };
+  const up = (): void => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    refitActive();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+});
+
 /* ---------------- quit guard + shortcuts ---------------- */
 
 if (IN_TAURI) {
@@ -1633,16 +1826,9 @@ if (IS_SERVE) {
 }
 
 window.addEventListener("resize", () => {
-  const ws = store.currentWorkspace();
-  const active = ws?.tabs[ws.active];
-  const view = active ? views.get(active.id) : undefined;
-  if (!ws || !active || !view) return;
-  try {
-    view.fit.fit();
-  } catch {
-    /* ignore */
-  }
-  if (BACKEND) void client.resize(ws.id, active.id, view.term.cols, view.term.rows).catch(() => {});
+  // Keep a drag-resized pane inside the new window width before fitting.
+  if (previewOpen) applyPreviewWidth();
+  refitActive();
 });
 
 const onShortcut = (e: KeyboardEvent): void => {
@@ -1708,6 +1894,14 @@ const onShortcut = (e: KeyboardEvent): void => {
       }
       break;
     }
+    case "toggle-preview":
+      e.preventDefault();
+      togglePreview();
+      break;
+    case "focus-preview":
+      e.preventDefault();
+      focusPreview();
+      break;
     case "close-overlay":
       if (sessionOverlay.style.display !== "none") closeSessionDialog();
       else if (settingsOverlay.style.display !== "none") closeSettings();
@@ -2008,6 +2202,12 @@ function openPalette(): void {
     add("close-session", "Close session", () => closeSession(ws));
   }
   add("settings", "Open settings", () => openSettings());
+  add("toggle-preview", previewOpen ? "Hide browser pane" : "Show browser pane", () =>
+    togglePreview(),
+  );
+  if (previewOpen) {
+    add("focus-preview", "Focus browser address bar", () => focusPreview());
+  }
   add("search", "Search", () => {
     titleSearch.focus();
     titleSearch.select();

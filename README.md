@@ -240,6 +240,14 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
   `muis-notify --body "done"` (targets the current tab via `MUIS_TAB_ID`).
   Off-screen tabs badge, and the OS toast fires while muis is unfocused.
   See `docs/archive/notifications.md`.
+- Browser pane: Ctrl+Shift+B docks an HTML preview to the right of the
+  terminal, Ctrl+Shift+U jumps to its address bar, and the × closes it
+  (Escape with the pane focused also closes it). Drag the left edge to
+  resize. Agents open it with `muis-agent open http://localhost:5173`;
+  opencode exposes the same call as the `muis_open_url` tool, so a coding
+  turn can show its own dev server or generated page without leaving muis.
+  Pages that refuse framing get the ↗ button, which hands the URL to the
+  system browser.
 
 ## Tests
 

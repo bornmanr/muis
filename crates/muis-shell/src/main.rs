@@ -568,6 +568,9 @@ fn main() {
                 ClientRequest::AgentActivity(req) => {
                     let _ = handle.emit("muis-agent-activity", &req);
                 }
+                ClientRequest::OpenUrl(req) => {
+                    let _ = handle.emit("muis-open-url", &req);
+                }
             }) {
                 log::warn!("notification endpoint unavailable ({socket}): {e}");
             }
@@ -599,6 +602,17 @@ mod tests {
         assert!(OPENCODE_PLUGIN_SRC.contains("export default"));
         assert!(OPENCODE_PLUGIN_SRC.contains("id: \"muis\""));
         assert!(OPENCODE_PLUGIN_SRC.contains("setup("));
+    }
+
+    #[test]
+    fn opencode_plugin_exposes_the_browser_pane_tool() {
+        // The pane is driven from opencode through this tool; if the
+        // registration path changes, the feature silently disappears from
+        // the model's tool list, so lock the contract here.
+        assert!(OPENCODE_PLUGIN_SRC.contains("muis_open_url"));
+        assert!(OPENCODE_PLUGIN_SRC.contains("ctx.tool?.transform"));
+        assert!(OPENCODE_PLUGIN_SRC.contains("tools.add("));
+        assert!(OPENCODE_PLUGIN_SRC.contains("[\"open\", url]"));
     }
 
     #[test]
