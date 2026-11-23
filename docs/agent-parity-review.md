@@ -160,11 +160,16 @@ Why: the single largest gap; also fixes browser-mode "closing the tab ends its p
 Recommendation: **yes**, as its own project phase.
 
 **D02 · `muis attach` + multi-client / read-only spectator** — herdr, Paseo, cmux
-`muis attach <session>` from any terminal, plus a second window or browser tab
-watching the same session without keyboard control.
-Effort **L** (after D01) · Risk: input arbitration, resize negotiation.
-Why: agents-as-workers only pays off if you can look from elsewhere.
-Recommendation: **defer** until D01 ships.
+Open the same session in a second window or browser tab, and detach by
+closing that client. Split in two: **2a** second client sharing a live session
+(cheap once D01 exists — same UI, new attach path); **2b** a standalone TTY
+client (`muis attach` inside a plain terminal) needs a VT renderer in Rust,
+since muis' VT is xterm.js — defer it to when D26 exists.
+Effort **2a S–M after D01 / 2b L** · Risk: input arbitration, resize
+negotiation (solved by one writable client, others read-only).
+Why: agents-as-workers only pays off if you can look from elsewhere; also the
+fallback when the GUI is wedged.
+Recommendation: **yes to 2a** (one writable + read-only spectators), defer 2b.
 
 **D03 · Scrollback persistence + cross-session search** — cmux, tmux, Warp
 Persist scrollback per tab to disk; extend `searchall.ts` to search closed
@@ -427,5 +432,5 @@ Planned phases if the recommendations stand:
 
 | Item | Verdict | Constraints / notes |
 |---|---|---|
-| D01 | **yes** | PTY-centric, not agent-centric. Idle reaper with configurable timer; park idle/done tabs instead of keeping processes; byte-capped daemon ring buffer (not lines); parent-death signal on workers; start-up sweep by pid+start-time; `daemon status/stop`; one instance per `MUIS_HOME`. Must not assume "one agent process per tab" (future APC layer). |
+| D01 | **yes** | PTY-centric, not agent-centric. Idle reaper with configurable timer; park idle/done tabs instead of keeping processes; byte-capped daemon ring buffer (not lines); parent-death signal on workers; start-up sweep by pid+start-time; `daemon status/stop`; one instance per `MUIS_HOME`. Must not assume "one agent process per tab" (future APC layer). Park only a shell at prompt or a known agent reporting done/idle; never park on recent input; `blocked` exempt by default; new `parked` tab state distinct from done/exited; resume resolver has both `resume` and `attach` verbs; agent state keyed by (tab, session id, state), never PID. |
 
