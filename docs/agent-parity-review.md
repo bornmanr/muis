@@ -147,6 +147,24 @@ and is at parity or ahead on **native chrome**, **browser pane**, and
 
 ---
 
+## 5.4 Agent strategy (decided during review)
+
+1. The generic seam is mandatory: agent state (D04), control socket (D12),
+   MCP tools (D13). Any agent gets notifications and tools.
+2. opencode is the **first-class tier**: auto-setup, route tracking, session
+   resume, live metadata. Advertised as such, never assumed.
+3. **No hard dependency.** `optdepends=('opencode: first-class agent
+   integration')` plus an in-app setup action and a tested version range.
+   An incompatible version refuses the plugin install and says so in the
+   statusbar instead of half-working.
+4. Resume is per-agent adapters, not opencode-only: `codex resume`,
+   `claude --continue` / `--resume`. This removes most of the
+   "half functionality" gap.
+5. The UI never invents a state it does not have (no guessed badges for
+   hookless agents).
+
+---
+
 ## 6. Decision deck (32 items)
 
 Verdict: **pending** → yes / no / defer. Recommendation is advisory only.
