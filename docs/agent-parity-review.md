@@ -7,7 +7,7 @@ agent console field, and a numbered decision deck to accept, reject or defer.
 
 How to read: §2 is what muis is today. §3–§5 are the comparison and the
 resulting gap/opportunity list. §6 is the only part that needs a decision —
-35 items, each with one line of "what", "who has it", "why it fits", effort,
+36 items, each with one line of "what", "who has it", "why it fits", effort,
 and a recommendation. §7 is what must stay out.
 
 Effort scale: **S** ≤ 1 day · **M** 1–3 days · **L** 1–2 weeks · **XL** > 2 weeks.
@@ -165,7 +165,7 @@ and is at parity or ahead on **native chrome**, **browser pane**, and
 
 ---
 
-## 6. Decision deck (35 items)
+## 6. Decision deck (36 items)
 
 Verdict: **pending** → yes / no / defer. Recommendation is advisory only.
 
@@ -442,6 +442,18 @@ Why: it makes Windows genuine parity (same client, no WebView), gives a LAN
 second screen with no relay or SSH, and is the cheapest end-to-end proof that
 the daemon model works.
 
+### Orchestration (parked with Snor)
+
+**D36 · Snor sends to other tabs** — parked with the Snor engine
+An orchestrator (Snor) tells another tab to do something: "also run the
+Veldmuis task in the veldmuis tab". The transport is D12's `send`, so the work
+is policy: address by tab/workspace/agent name, mark the message in the target
+tab as coming from Snor, require a delivery receipt (`capture` after send),
+rate-limit, and confirm when the target tab is `blocked` (typing into an
+approval prompt is the same footgun as D18).
+Effort **M** after D12 · Risk: medium — one agent typing into another.
+Recommendation: **defer** until the Snor engine exists.
+
 ---
 
 ## 7. Non-goals (would change what muis is)
@@ -531,3 +543,7 @@ Planned phases if the recommendations stand:
   `NO_COLOR` / `TERM`, then which client is reading it (TUI vs mobile/web —
   separate renderers). Do not build a markdown renderer in muis to compensate;
   the muis-side answer is D33/D34.
+| D25 | **no** | One terminal per tab stays. Side-by-side is covered by tabs, D02's second window and the D33 dock; herdr/cmux can run inside muis. |
+| D26 | **no** | Local-only. Browser host covers LAN; opencode mobile covers away. No self-hosted relay or SSH upkeep. |
+| D27 | **no** | D35's browser client covers the phone on the LAN; no separate app, no relay, no accounts. |
+| D28 | **no** | No broadcast input. Scripted per-tab `send` (D12) covers legitimate cases; Snor orchestration is D36. |
