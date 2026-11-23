@@ -7,7 +7,7 @@ agent console field, and a numbered decision deck to accept, reject or defer.
 
 How to read: §2 is what muis is today. §3–§5 are the comparison and the
 resulting gap/opportunity list. §6 is the only part that needs a decision —
-34 items, each with one line of "what", "who has it", "why it fits", effort,
+35 items, each with one line of "what", "who has it", "why it fits", effort,
 and a recommendation. §7 is what must stay out.
 
 Effort scale: **S** ≤ 1 day · **M** 1–3 days · **L** 1–2 weeks · **XL** > 2 weeks.
@@ -165,7 +165,7 @@ and is at parity or ahead on **native chrome**, **browser pane**, and
 
 ---
 
-## 6. Decision deck (34 items)
+## 6. Decision deck (35 items)
 
 Verdict: **pending** → yes / no / defer. Recommendation is advisory only.
 
@@ -422,6 +422,26 @@ Effort **M** for (b) · Risk: guessing which text is markdown; must stay
 explicit and never automatic.
 Recommendation: **defer** unless (b) falls out of D33 for free.
 
+### Clients and hosts (added on review)
+
+**D35 · Browser client parity + app⇄tab handoff** — the Windows path, muis-server
+Today the browser host differs in four ways: no custom titlebar, backend folder
+picker, browser notifications, and the tab *is* the window. Make it a
+first-class **secondary mode on Linux**: full chrome (hide in-page window
+controls where a real frame exists, keep the Breeze titlebar), clipboard and
+drag-drop parity, browser-aware chords (`Ctrl+W` must detach, never kill
+sessions), a PWA manifest so it installs as a real window, and a one-click
+handoff — "Open in browser" in the native titlebar serves loopback with a
+one-time token and attaches the same session; "Open in app" returns.
+Depends on D01 for the handoff (same session, two clients); before that it can
+only hand off layout, not live PTYs.
+Effort **M–L** · Risk: browser-reserved chords, clipboard permissions, and one
+more parity surface to keep honest — mitigated by the existing host-parity
+tests and the Selenium e2e suite.
+Why: it makes Windows genuine parity (same client, no WebView), gives a LAN
+second screen with no relay or SSH, and is the cheapest end-to-end proof that
+the daemon model works.
+
 ---
 
 ## 7. Non-goals (would change what muis is)
@@ -501,3 +521,13 @@ Planned phases if the recommendations stand:
 | D22 | **yes** | UI action + `muis new --worktree`; defaults to `../.worktrees/<repo>-<slug>` and neutral `feature/` `fix/` `chore/` prefixes; setup recipe; refuse on dirty tree / existing branch instead of guessing. |
 | D23 | **yes** | CLI + small input in the new-tab action; task text passed as argv, never interpolated into a shell string; per-agent prompt adapters. |
 | D24 | **no** | No in-app diff/review. Delegate to lazygit/delta/gh in the tab; D33 renders patches. |
+
+---
+
+## 11. Open investigations (not muis scope)
+
+- **Why bold/headings show as literal `**` in opencode.** Triage in order:
+  same text in konsole with plain `opencode` (client vs terminal), then
+  `NO_COLOR` / `TERM`, then which client is reading it (TUI vs mobile/web —
+  separate renderers). Do not build a markdown renderer in muis to compensate;
+  the muis-side answer is D33/D34.
