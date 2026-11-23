@@ -432,11 +432,16 @@ Planned phases if the recommendations stand:
 
 | Item | Verdict | Constraints / notes |
 |---|---|---|
+| D01 | **yes** | PTY-centric, not agent-centric. Idle reaper with configurable timer; park idle/done tabs instead of keeping processes; byte-capped daemon ring buffer (not lines); parent-death signal on workers; start-up sweep by pid+start-time; `daemon status/stop`; one instance per `MUIS_HOME`. Must not assume "one agent process per tab" (future APC layer). Park only a shell at prompt or a known agent reporting done/idle; never park on recent input; `blocked` exempt by default; new `parked` tab state distinct from done/exited; resume resolver has both `resume` and `attach` verbs; agent state keyed by (tab, session id, state), never PID. |
 | D02 | **yes (2a only)** | Second client = another muis window or browser tab sharing a live session; one writable, others read-only. Standalone TTY client (2b) deferred until remote exists. |
 | D03 | **yes** | Byte caps, retention, per-workspace excludes, `--no-history` per tab, `muis history clear`. Plain text/JSONL so `rg` works without muis. |
 | D04 | **yes** | CLI + injected env (`MUIS_SOCKET`, `MUIS_TAB_ID`) + OSC fallback; one state machine replaces `DoneTracker`; expiring `working`; no double toast with `finish.ts`. |
 | D05 | **yes** | Own overlay; blocked first then oldest-first; jump-to-next chord; Enter clears `seen`. |
 | D06 | **no** | No screen scraping. Revisit only if an agent we actually run cannot self-report. |
 | D07 | **yes** | Attention ring + click-to-focus through `org.freedesktop.Notifications`; taskbar badge folded into D14. |
-| D01 | **yes** | PTY-centric, not agent-centric. Idle reaper with configurable timer; park idle/done tabs instead of keeping processes; byte-capped daemon ring buffer (not lines); parent-death signal on workers; start-up sweep by pid+start-time; `daemon status/stop`; one instance per `MUIS_HOME`. Must not assume "one agent process per tab" (future APC layer). Park only a shell at prompt or a known agent reporting done/idle; never park on recent input; `blocked` exempt by default; new `parked` tab state distinct from done/exited; resume resolver has both `resume` and `attach` verbs; agent state keyed by (tab, session id, state), never PID. |
-
+| D08 | **defer** | Trigger: opencode mobile stops covering away, or truly unattended runs. No self-hosted relay/SSH upkeep. |
+| D09 | **yes** | Agent, model, branch, cwd, ports, state in tooltip + one compact strip. Ephemeral, never persisted. No cost estimates. |
+| D10 | **yes (always available)** | No per-workspace toggle. Must keep: disposable profile by default, explicit opt-in "use my signed-in session" (marked in the pane), no cookie import, no auto-navigate to URLs from terminal output. Browser mode cannot isolate (iframe) → automation off there by default. |
+| D11 | **yes (full)** | URL bar, nav, external-open, devtools/new-tab, remembered URL per workspace. |
+| D12 | **yes (core + browser)** | JSON over `$XDG_RUNTIME_DIR` socket, 0600, peer-uid check, never TCP; reuses the 8 IPC frames; per-verb policy + audit log for `send`. |
+| D13 | **yes (plugins only)** | Grow the existing opencode server/TUI plugins; no MCP server until a second agent host is in use. |
