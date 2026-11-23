@@ -1,6 +1,6 @@
 # muis vs. the agent-tool field: parity review and decision deck
 
-Status: **for review** (verdicts pending). Date: 2026-11-23.
+Status: **review closed** (2026-11-23). 24 yes, 8 no, 4 defer. Nothing built.
 Scope: muis feature inventory, competitive parity against the agent terminal /
 agent console field, and a numbered decision deck to accept, reject or defer.
 **Nothing here is approved for build.**
@@ -492,14 +492,18 @@ Recommendation: **defer** until the Snor engine exists.
    until the deck is closed.
 4. Verdicts are written back into §6 in the same PR.
 
-Planned phases if the recommendations stand:
+Closed verdicts: 24 yes, 8 no, 4 defer.
 
-- **P1 (agent awareness, ~1 week):** D04 → D05 → D07 → D09 → D14 → D17 → D18
-  → D32.
-- **P2 (persistence, its own project):** D01 → D02 → D03.
-- **P3 (control surface):** D12 → D10 → D13.
-- **P4 (workflow niceties):** D22 → D23 → D30 → D15 → D19.
-- **Never:** D06, D21, D24, D25, D27, D28.
+Phases:
+
+- **P1 — agent awareness (~1 week):** D04 → D05 → D07 → D09 → D14 → D32 →
+  D17 → D18 → D30.
+- **P2 — persistence (own project):** D01 → D02 (2a) → D03 → D35.
+  D35's live handoff depends on D01; before that it can only hand off layout.
+- **P3 — control surface:** D12 → D13 → D10 → D11 → D33.
+- **P4 — workflow and polish:** D15 → D19 → D20 → D22 → D23 → D31.
+- **Deferred (trigger required):** D08, D16, D34, D36.
+- **Never:** D06, D21, D24, D25, D26, D27, D28, D29.
 
 ---
 
@@ -547,3 +551,9 @@ Planned phases if the recommendations stand:
 | D26 | **no** | Local-only. Browser host covers LAN; opencode mobile covers away. No self-hosted relay or SSH upkeep. |
 | D27 | **no** | D35's browser client covers the phone on the LAN; no separate app, no relay, no accounts. |
 | D28 | **no** | No broadcast input. Scripted per-tab `send` (D12) covers legitimate cases; Snor orchestration is D36. |
+| D29 | **no** | Yakuake already covers a dropdown on this desktop; Wayland's global-shortcut path is a platform problem, not a muis feature. |
+| D30 | **yes (full)** | Reorder, rename, pin, per-tab color; workspace templates (startup commands + env per folder) if cheap. |
+| D31 | **yes** | Dotfiles, not muis: capped `MEMORY.md`/`USER.md` via opencode `instructions`, patching `memory` skill, shared `~/.agents/skills`. |
+| D32 | **yes (both)** | `Ctrl+=`/`-`/`0` font zoom persisted to `AppConfig.fontSize`; `Ctrl+Shift+=` whole-window scale. |
+| D35 | **yes** | Browser client parity + "open in browser"/"open in app" handoff; PWA manifest; `Ctrl+W` in a browser client must detach, not kill. Live handoff requires D01. |
+| D36 | **defer** | Trigger: the Snor engine exists. Transport is D12 `send`; then add addressing, provenance marker, delivery receipt, rate limit, blocked-tab confirm. |
