@@ -498,3 +498,6 @@ Planned phases if the recommendations stand:
 | D21 | **no** | No image protocols in the grid. Covered instead by D33. |
 | D33 | **yes (viewer)** | `muis view <path>` + `--capture`; images, PDFs, markdown, HTML, diffs, JSON in the existing dock; workspace-scoped paths, no remote fetch for local files. |
 | D34 | **defer** | Rendering agent markdown belongs to the agent's client (opencode TUI). Revisit only if a captured-block render falls out of D33 for free. |
+| D22 | **yes** | UI action + `muis new --worktree`; defaults to `../.worktrees/<repo>-<slug>` and neutral `feature/` `fix/` `chore/` prefixes; setup recipe; refuse on dirty tree / existing branch instead of guessing. |
+| D23 | **yes** | CLI + small input in the new-tab action; task text passed as argv, never interpolated into a shell string; per-agent prompt adapters. |
+| D24 | **no** | No in-app diff/review. Delegate to lazygit/delta/gh in the tab; D33 renders patches. |
