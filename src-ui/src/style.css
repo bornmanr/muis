@@ -135,6 +135,7 @@ body{
   background:#232629; border:1px solid var(--border-dark); border-bottom:none;
   border-radius:4px 4px 0 0; font-size:12.5px; cursor:pointer; white-space:nowrap; color:var(--dim);
   flex:0 1 180px; min-width:120px;
+  position:relative;
 }
 .tab.active{
   background:#31363b; color:#fff; border-color:var(--border-dark); box-shadow:inset 0 2px 0 var(--accent);
@@ -154,6 +155,14 @@ body{
 /* Unseen waits blink; once looked at the chip stays lit until the agent
    resumes or the tab closes. */
 .t-state.unseen{animation:pulse 1s infinite}
+/* `blocked` is the only state that asks something of the user, so it reads
+   red instead of the completion green. */
+.t-state.blocked{background:var(--red); color:#fff}
+/* OSC 9;4 progress: a thin bar on the tab's bottom edge. Indeterminate has
+   no width and pulses, so a stuck job still looks alive. */
+.t-progress{position:absolute; left:0; bottom:0; height:2px; background:var(--accent); border-radius:0 2px 0 0; pointer-events:none}
+.t-progress.error{background:var(--red)}
+.t-progress.indeterminate{width:100%; opacity:.5; animation:pulse 1.2s infinite}
 /* Sidebar: a fresh alert counts and pulses, one the user already looked at
    only leaves a steady dot. */
 .s-dot.notify{background:var(--green); box-shadow:0 0 10px var(--green)}

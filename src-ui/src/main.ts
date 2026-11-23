@@ -21,6 +21,7 @@ import { shouldToastOnFinish } from "./finish";
 import { collectMatches, type SearchHit, type SearchScope, type SearchableTab } from "./searchall";
 import { resolveShortcut } from "./shortcuts";
 import { DoneTracker, sidebarAttention, tabAttentionLabel, type Attention } from "./done";
+import { AgentStateTracker, agentLabel, isAgentState, stateChip, type AgentState } from "./agentState";
 import { NotifyRouter, notifyEventFromCli, notifyEventFromCommand, type CliNotify } from "./notify";
 import {
   isInjectedResume,
@@ -213,6 +214,16 @@ interface CliOpenUrl {
   session?: string | null;
 }
 
+/** A `muis-agent report` forwarded by the shell. */
+interface CliAgentState {
+  kind?: string;
+  state?: string;
+  tab_id?: string | null;
+  session?: string | null;
+  agent?: string | null;
+  model?: string | null;
+}
+
 /** Tabs whose restore launch already ran this session. */
 const agentLaunched = new Set<string>();
 /** Resume line injected per tab, so the shell's cmd-start for it is ignored. */
@@ -264,6 +275,7 @@ function subscribe<T>(event: string, handler: (payload: T) => void): void {
 subscribe<CliNotify>("muis-notify", handleNotifyRequest);
 subscribe<CliAgentSession>("muis-agent-session", handleAgentSession);
 subscribe<CliAgentActivity>("muis-agent-activity", handleAgentActivity);
+subscribe<CliAgentState>("muis-agent-state", handleAgentState);
 subscribe<CliOpenUrl>("muis-open-url", handleOpenUrl);
 
 /** View options; loaded from disk in init, edited in the settings dialog. */
@@ -862,6 +874,8 @@ function observeOsc(sessionId: string, tab: Tab, data: Uint8Array): void {
       const cmd = ev.cmd || st.input.trim() || currentInputLine(tabNow.id);
       commandTracker.onCmdStart(tabNow.id, cmd);
       reportDebugStage("cmd-start", { tab: tabNow.id, cmd });
+      // A new command owns no old progress.
+      if (tabProgress.delete(tabNow.id)) changed = true;
       // A new command means the previous completion is handled — unless the
       // tab is owned by an agent. There the mark belongs to the agent and only
       // a reply (`muis-notify --running`) or closing the tab may drop it: the
@@ -876,7 +890,21 @@ function observeOsc(sessionId: string, tab: Tab, data: Uint8Array): void {
       }
       renderCommandHead(tabNow.id);
     } else if (ev.type === "cmd-end") {
+      if (tabProgress.delete(tabNow.id)) changed = true;
       finishCommand(tabNow.id, ev.exit);
+    } else if (ev.type === "progress") {
+      // OSC 9;4, emitted by long builds and by agents that report progress.
+      if (ev.state === 0) {
+        tabProgress.delete(tabNow.id);
+      } else {
+        tabProgress.set(tabNow.id, { state: ev.state, percent: ev.percent });
+      }
+      changed = true;
+    } else if (ev.type === "agent-state") {
+      // OSC 777 fallback for agents that cannot run `muis-agent`.
+      if (isAgentState(ev.state) && applyAgentState(tabNow, ev.state, null, null, null)) {
+        changed = true;
+      }
     } else if (ev.type === "notify") {
       // Terminal agents report completion with OSC 9/777/99 (or the
       // muis-notify CLI). Badge the tab when the user was not looking at
@@ -1529,9 +1557,34 @@ function tabElement(ws: Workspace, tab: Tab, selected: boolean): HTMLElement {
   // A pending completion reads "waiting" — it wants the user. It blinks
   // until the tab is looked at, then stays lit (green, no animation) until
   // the agent resumes or the tab closes. Only a dead pty reads "done".
+  //
+  // The agent's own report wins over the completion heuristic: it can say
+  // *why* the tab is waiting (blocked vs finished), which output never can.
+  const agentState = agentStates.stateOf(tab.id, Date.now());
+  const dead = activity.exited.has(tab.id);
   const attention = tabAttention(tab.id);
-  const chip = tabAttentionLabel(attention, activity.exited.has(tab.id));
-  if (chip) d.append(el("span", "t-state" + (attention === "unseen" ? " unseen" : ""), chip));
+  const chip = dead
+    ? tabAttentionLabel(attention, true)
+    : stateChip(agentState) ?? tabAttentionLabel(attention, false);
+  if (chip) {
+    const cls =
+      "t-state" +
+      (agentState === "blocked" ? " blocked" : attention === "unseen" ? " unseen" : "");
+    d.append(el("span", cls, chip));
+  }
+  const agentText = agentLabel(agentStates.get(tab.id));
+  if (agentText) {
+    d.title = dead ? `${agentText} — exited` : `${agentText} — ${agentState ?? "unknown"}`;
+  }
+  // OSC 9;4 progress: a thin bar along the bottom edge. `state 2` is an
+  // error, and a null percentage is indeterminate (no width, pulsing).
+  const progress = tabProgress.get(tab.id);
+  if (progress) {
+    const bar = el("span", "t-progress" + (progress.state === 2 ? " error" : ""));
+    if (progress.percent === null) bar.classList.add("indeterminate");
+    else bar.style.width = `${progress.percent}%`;
+    d.append(bar);
+  }
   const x = el("span", "x", "✕");
   x.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1595,10 +1648,12 @@ function renderTerms(ws: Workspace | undefined): void {
 
 const stCwd = el("span", "", "");
 const stGit = el("span", "pill", "");
+/** Which agent is running in the active tab, from its own reports. */
+const stAgent = el("span", "", "");
 const stClock = el("span", "clock", "");
 // Context on the left, clock on the far right.
-statusbar.append(stCwd, stGit, el("span", ""), stClock);
-(statusbar.children[2] as HTMLElement).style.marginLeft = "auto";
+statusbar.append(stCwd, stGit, stAgent, el("span", ""), stClock);
+(statusbar.children[3] as HTMLElement).style.marginLeft = "auto";
 
 const gitCache = new Map<string, string>();
 
@@ -1623,6 +1678,14 @@ function renderStatusbar(): void {
   } else {
     stGit.textContent = "";
   }
+  // The active tab's agent: name, model and what it is doing. Empty for a
+  // plain shell tab, so the statusbar does not invent an agent.
+  const report = tab ? agentStates.get(tab.id) : undefined;
+  const label = agentLabel(report);
+  const state = tab ? agentStates.stateOf(tab.id, Date.now()) : null;
+  stAgent.textContent = label
+    ? `${label}${state && state !== "idle" ? ` · ${state}` : ""}`
+    : "";
   applyStatusbarVisibility();
 }
 
@@ -1631,6 +1694,7 @@ function applyStatusbarVisibility(): void {
   const segs: [string, HTMLElement][] = [
     ["cwd", stCwd],
     ["git", stGit],
+    ["agent", stAgent],
     ["clock", stClock],
   ];
   for (const [id, node] of segs) {
@@ -1642,6 +1706,14 @@ function tickClock(): void {
   const f = () => {
     const text = clockText(new Date());
     if (stClock.textContent !== text) stClock.textContent = text;
+    // A silent agent must stop looking busy. Only re-render when something
+    // actually expired, so a quiet window stays quiet.
+    if (agentStates.expireWorking(Date.now())) {
+      renderTabs();
+      renderSessions();
+      renderStatusbar();
+      updateWindowTitle();
+    }
   };
   f();
   setInterval(f, 1000);
@@ -2035,6 +2107,7 @@ for (const s of ["none", "visual", "audible", "both"]) {
 const SEGMENTS: [string, string][] = [
   ["cwd", "cwd"],
   ["git", "git"],
+  ["agent", "agent"],
   ["clock", "clock"],
 ];
 const segBox = document.createElement("div");
@@ -2330,6 +2403,10 @@ function installDebugHook(): void {
 
 const commandTracker = new CommandTracker();
 const doneTabs = new DoneTracker();
+/** What each agent says it is doing (D04); the chrome reads this first. */
+const agentStates = new AgentStateTracker();
+/** OSC 9;4 progress per tab, in percent (null = indeterminate). */
+const tabProgress = new Map<string, { state: number; percent: number | null }>();
 const notifyRouter = new NotifyRouter();
 const idleFallback = new Map<string, number>();
 
@@ -2474,6 +2551,8 @@ function maybeNotifyFinished(tabId: string): void {
 function forgetTabState(tabId: string): void {
   commandTracker.forget(tabId);
   doneTabs.forget(tabId);
+  agentStates.forget(tabId);
+  tabProgress.delete(tabId);
   restoreCommands.delete(tabId);
   notifyRouter.forget(tabId);
   window.clearTimeout(idleFallback.get(tabId));
@@ -2541,6 +2620,51 @@ function clearAgentSession(tabId: string): void {
   if (applyAgentReport(store.workspaces, tabId, null, null) !== "ignored") {
     scheduleSave();
   }
+}
+
+/**
+ * A `muis-agent report`: the agent says what it is doing. This is the only
+ * source of `blocked` — a state no amount of output inspection can infer —
+ * and `working` clears a waiting mark, because the agent picked the work
+ * back up without the user typing.
+ */
+function handleAgentState(report: CliAgentState): void {
+  if (!isAgentState(report.state)) return;
+  const tab = tabForReport(store.workspaces, report.tab_id, report.session);
+  if (!tab) return;
+  applyAgentState(tab, report.state, report.agent ?? null, report.model ?? null, report.session ?? null);
+  reportDebugStage("agent-state", { tab: tab.id, state: report.state });
+  renderTabs();
+  renderSessions();
+  renderStatusbar();
+  updateWindowTitle();
+}
+
+/**
+ * Record one report against a tab. Returns true when the chrome changed.
+ * Split out from the event handler so the OSC 777 fallback takes the same
+ * path as the CLI hook.
+ */
+function applyAgentState(
+  tab: Tab,
+  state: AgentState,
+  agent: string | null,
+  model: string | null,
+  session: string | null,
+): boolean {
+  agentStates.report(tab.id, { state, agent, model, session, at: Date.now() });
+  if (state === "working") {
+    if (!doneTabs.has(tab.id)) return false;
+    doneTabs.clear(tab.id);
+    reportDebugStage("attention-cleared", { tab: tab.id, reason: "agent-working" });
+    return true;
+  }
+  if (state === "blocked" || state === "done") {
+    // Looking at the tab is not answering it, so a visible tab gets a steady
+    // mark and a hidden one pulses, exactly like a finished command.
+    doneTabs.mark(tab.id, isTabVisible(tab.id) ? "seen" : "unseen");
+  }
+  return true;
 }
 
 /** A `muis-notify` request forwarded by the shell, routed to its tab. */

@@ -240,6 +240,14 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
   `muis-notify --body "done"` (targets the current tab via `MUIS_TAB_ID`).
   Off-screen tabs badge, and the OS toast fires while muis is unfocused.
   See `docs/archive/notifications.md`.
+- Agent state: `muis-agent report <working|blocked|done|idle> [--agent NAME]
+  [--model NAME] [--session ses_ID]` tells the tab what the agent is doing.
+  `blocked` is the state that cannot be inferred from output — it puts the
+  tab's chip in "needs you" instead of "waiting". A hookless agent emits the
+  same state with `OSC 777;muis-state;<state>`. muis installs the report
+  calls in its opencode plugin; Claude/Codex hooks call the CLI directly.
+- Progress: `OSC 9;4;<state>;<percent>` (Windows Terminal / WezTerm / kitty)
+  draws a thin bar on the tab: 0 clears, 1 normal, 2 error, 3 indeterminate.
 - Browser pane: Ctrl+Shift+B (or the split-window button next to the
   gear) docks an HTML preview to the right of the terminal,
   Ctrl+Shift+U jumps to its address bar, and the × closes it (Escape with

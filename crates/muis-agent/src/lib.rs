@@ -15,19 +15,25 @@
 //! usage: muis-agent session <ses_ID> [--dir DIR] [--tab ID] [--socket NAME]
 //!        muis-agent clear [--tab ID] [--socket NAME]
 //!        muis-agent open <URL> [--session ses_ID] [--tab ID] [--socket NAME]
+//!        muis-agent report <working|blocked|done|idle> [--agent NAME]
+//!                   [--model NAME] [--session ses_ID] [--tab ID]
 //! ```
 
-use muis_core::notify::{self, AgentSessionRequest, OpenUrlRequest};
+use muis_core::notify::{self, AgentSessionRequest, AgentStateRequest, OpenUrlRequest};
 
 const USAGE: &str = "\
 usage: muis-agent session <ses_ID> [--dir DIR] [--tab ID] [--socket NAME]
        muis-agent clear [--tab ID] [--socket NAME]
        muis-agent open <URL> [--session ses_ID] [--tab ID] [--socket NAME]
+       muis-agent report <working|blocked|done|idle> [--agent NAME]
+                  [--model NAME] [--session ses_ID] [--tab ID] [--socket NAME]
 
 session/clear report the agent session currently open in a muis tab, so the
 tab can resume exactly that session after a restart. open shows an http(s)
-URL in muis's browser pane next to the terminal. Defaults for --socket and
---tab come from the MUIS_SOCKET and MUIS_TAB_ID environment variables.";
+URL in muis's browser pane next to the terminal. report says what the agent
+is doing right now; `blocked` is what puts a tab in the needs-you queue.
+Defaults for --socket and --tab come from the MUIS_SOCKET and MUIS_TAB_ID
+environment variables.";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
@@ -35,7 +41,11 @@ enum Command {
     Clear,
     Open {
         url: String,
-        session: Option<String>,
+    },
+    Report {
+        state: String,
+        agent: Option<String>,
+        model: Option<String>,
     },
 }
 
@@ -45,6 +55,7 @@ struct Cli {
     directory: Option<String>,
     tab_id: Option<String>,
     socket: Option<String>,
+    session: Option<String>,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
@@ -52,14 +63,17 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
     let mut args = args;
     let mut command: Option<String> = None;
     let mut positional: Option<String> = None;
-    let mut session: Option<String> = None;
+    let mut agent: Option<String> = None;
+    let mut model: Option<String> = None;
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
         match arg.as_str() {
             "--dir" => cli.directory = Some(value()?),
             "--tab" => cli.tab_id = Some(value()?),
             "--socket" => cli.socket = Some(value()?),
-            "--session" => session = Some(value()?),
+            "--session" => cli.session = Some(value()?),
+            "--agent" => agent = Some(value()?),
+            "--model" => model = Some(value()?),
             other if other.starts_with('-') => {
                 return Err(format!("unknown argument: {other}"));
             }
@@ -74,7 +88,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
             }
         }
     }
-    let saw_session = session.is_some();
+    let saw_session = cli.session.is_some();
+    let saw_agent = agent.is_some() || model.is_some();
     cli.command = Some(match command.as_deref() {
         Some("session") => {
             let id = positional.ok_or("session needs a session id")?;
@@ -94,18 +109,45 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
             if !notify::valid_http_url(&url) {
                 return Err(format!("open needs an http(s) URL: {url}"));
             }
-            if let Some(id) = session.as_deref() {
+            if let Some(id) = cli.session.as_deref() {
                 if !notify::valid_session_id(id) {
                     return Err(format!("invalid session id: {id}"));
                 }
             }
-            Command::Open { url, session }
+            Command::Open { url }
+        }
+        Some("report") => {
+            let state = positional.ok_or("report needs a state")?;
+            if !notify::valid_agent_state(&state) {
+                return Err(format!(
+                    "unknown state: {state} (expected one of {})",
+                    notify::AGENT_STATES.join(", ")
+                ));
+            }
+            if let Some(id) = cli.session.as_deref() {
+                if !notify::valid_session_id(id) {
+                    return Err(format!("invalid session id: {id}"));
+                }
+            }
+            Command::Report {
+                state,
+                agent,
+                model,
+            }
         }
         Some(other) => return Err(format!("unknown command: {other}")),
         None => return Err("missing command".to_string()),
     });
-    if saw_session && !matches!(cli.command, Some(Command::Open { .. })) {
-        return Err("--session is only valid with open".to_string());
+    let command_allows_session = matches!(
+        cli.command,
+        Some(Command::Open { .. }) | Some(Command::Report { .. })
+    );
+    let command_allows_agent = matches!(cli.command, Some(Command::Report { .. }));
+    if saw_session && !command_allows_session {
+        return Err("--session is only valid with open or report".to_string());
+    }
+    if saw_agent && !command_allows_agent {
+        return Err("--agent/--model are only valid with report".to_string());
     }
     Ok(cli)
 }
@@ -147,14 +189,25 @@ pub fn run_with(args: impl IntoIterator<Item = String>) -> i32 {
             let req = AgentSessionRequest::new(None, None, tab);
             notify::send_agent(&socket, &req)
         }
-        Some(Command::Open { url, session }) => {
+        Some(Command::Open { url }) => {
             // parse_args already rejected non-http(s); this keeps the
             // invariant local instead of trusting the caller.
-            let Some(req) = OpenUrlRequest::new(&url, tab, session) else {
+            let Some(req) = OpenUrlRequest::new(&url, tab, cli.session) else {
                 eprintln!("muis-agent: open needs an http(s) URL: {url}");
                 return 2;
             };
             notify::send_open_url(&socket, &req)
+        }
+        Some(Command::Report {
+            state,
+            agent,
+            model,
+        }) => {
+            let Some(req) = AgentStateRequest::new(&state, tab, cli.session, agent, model) else {
+                eprintln!("muis-agent: unknown state: {state}");
+                return 2;
+            };
+            notify::send_agent_state(&socket, &req)
         }
         None => return 2,
     };
@@ -199,6 +252,7 @@ mod tests {
                 directory: Some("/tmp".into()),
                 tab_id: Some("t1".into()),
                 socket: Some("s".into()),
+                session: None,
             }
         );
     }
@@ -227,18 +281,67 @@ mod tests {
             cli.command,
             Some(Command::Open {
                 url: "http://localhost:5173/".into(),
-                session: Some("ses_abc123".into()),
             })
         );
+        assert_eq!(cli.session.as_deref(), Some("ses_abc123"));
 
         let bare = parse_args(args(&["open", "https://example.com"])).unwrap();
         assert_eq!(
             bare.command,
             Some(Command::Open {
                 url: "https://example.com".into(),
-                session: None,
             })
         );
+        assert_eq!(bare.session, None);
+    }
+
+    #[test]
+    fn parses_report_with_labels_and_routing() {
+        let cli = parse_args(args(&[
+            "report",
+            "blocked",
+            "--agent",
+            "opencode",
+            "--model",
+            "opus",
+            "--session",
+            "ses_abc123",
+            "--tab",
+            "t1",
+        ]))
+        .unwrap();
+        assert_eq!(
+            cli.command,
+            Some(Command::Report {
+                state: "blocked".into(),
+                agent: Some("opencode".into()),
+                model: Some("opus".into()),
+            })
+        );
+        assert_eq!(cli.session.as_deref(), Some("ses_abc123"));
+
+        // The state alone is enough: the tab and socket come from the env.
+        let bare = parse_args(args(&["report", "done"])).unwrap();
+        assert_eq!(
+            bare.command,
+            Some(Command::Report {
+                state: "done".into(),
+                agent: None,
+                model: None,
+            })
+        );
+    }
+
+    #[test]
+    fn report_rejects_unknown_states_and_misplaced_flags() {
+        assert!(parse_args(args(&["report"])).is_err());
+        assert!(parse_args(args(&["report", "running"])).is_err());
+        assert!(parse_args(args(&["report", "DONE"])).is_err());
+        assert!(parse_args(args(&["report", "done", "extra"])).is_err());
+        assert!(parse_args(args(&["report", "done", "--session", "abc"])).is_err());
+        // Labels belong to report, not to the other commands.
+        assert!(parse_args(args(&["session", "ses_a", "--agent", "x"])).is_err());
+        assert!(parse_args(args(&["clear", "--model", "x"])).is_err());
     }
 
     #[test]

@@ -12,6 +12,12 @@
 // The `muis_open_url` tool lets the agent show a preview in muis's browser
 // pane, docked next to the terminal it is driving.
 //
+// Each event also becomes a lifecycle report (`muis-agent report`), which is
+// what drives the tab's real state: `working` while a turn runs, `blocked`
+// when opencode is waiting on a permission or a form, `done` when the turn
+// ends. Notifications still drive toasts; the state report is what lets the
+// chrome say *why* a tab is waiting instead of only that it finished.
+//
 // Every report carries the opencode session id. The server plugin runs in
 // the shared `opencode serve` process, so `MUIS_TAB_ID` there belongs to
 // whichever tab started that server; only the session id identifies the tab
@@ -88,6 +94,18 @@ export function agentCommand(env = process.env) {
 function reportAgent(args) {
   const { command, args: prefix } = agentCommand();
   send(command, [...prefix, ...args]);
+}
+
+/** Report a lifecycle state to muis (`muis-agent report`). */
+function reportAgentState(args) {
+  const { command, args: prefix } = agentCommand();
+  send(command, [...prefix, ...args]);
+}
+
+/** Best-effort model id from an opencode event, for the tab's tooltip. */
+export function modelOf(data) {
+  const raw = data?.modelID ?? data?.model?.id ?? data?.model;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : "";
 }
 
 /**
@@ -226,12 +244,15 @@ export function permissionOf(data) {
  * Session bookkeeping and the helper calls it triggers. Both helpers are
  * injected so the behavior is testable outside opencode.
  */
-export function createMuisPlugin({ reportAgent, notify }) {
+export function createMuisPlugin({ reportAgent, notify, reportState = reportAgentState }) {
   // Session id -> { title, directory, parentID }, learned from
   // session.created/renamed (turn events only carry the id), so the
   // notification can name the project and the session.
   const sessions = new Map();
   let lastSession = "";
+  // Last lifecycle state sent per session, so a session that emits the same
+  // event twice does not re-fire a report.
+  const lastState = new Map();
 
   // Server-side navigation is invisible to plugins, so the prompt hook only
   // catches turns. The TUI plugin is the exact source for /resume.
@@ -255,6 +276,22 @@ export function createMuisPlugin({ reportAgent, notify }) {
     };
   };
 
+  /**
+   * Report the session's lifecycle state. Subagents are skipped: their state
+   * must not override the tab's own chat. Repeats are dropped per session.
+   */
+  const state = (value, id, data) => {
+    if (typeof id !== "string" || !id.startsWith("ses_")) return;
+    if (sessions.get(id)?.parentID) return;
+    if (lastState.get(id) === value) return;
+    lastState.set(id, value);
+    const args = ["report", value, "--agent", "opencode"];
+    const model = modelOf(data);
+    if (model) args.push("--model", model);
+    args.push("--session", id);
+    reportState(args);
+  };
+
   return {
     /** One event from the opencode event stream. */
     event(event) {
@@ -265,6 +302,7 @@ export function createMuisPlugin({ reportAgent, notify }) {
       if (type === "permission.asked") {
         const id = data.sessionID;
         if (typeof id !== "string") return;
+        state("blocked", id, data);
         const where = describe(id, event);
         const what = permissionOf(data);
         const body = `${where.summary || "opencode"} needs permission`;
@@ -283,6 +321,7 @@ export function createMuisPlugin({ reportAgent, notify }) {
         const form = data.form ?? {};
         const id = form.sessionID;
         if (typeof id !== "string") return;
+        state("blocked", id, data);
         const where = describe(id, event);
         const what = typeof form.title === "string" ? form.title.trim() : "";
         const body = `${where.summary || "opencode"} is waiting for your input`;
@@ -300,7 +339,10 @@ export function createMuisPlugin({ reportAgent, notify }) {
       // The user answered: the tab is no longer waiting on them.
       if (REPLY_EVENTS.includes(type)) {
         const id = data.sessionID;
-        if (typeof id === "string") notify(["--running", "--session", id]);
+        if (typeof id === "string") {
+          state("working", id, data);
+          notify(["--running", "--session", id]);
+        }
         return;
       }
 
@@ -327,6 +369,7 @@ export function createMuisPlugin({ reportAgent, notify }) {
       // A turn ended. opencode 2.3 reports execution events; older builds
       // still send session.idle. A failed turn gets its own wording so the
       // notification does not claim work succeeded.
+      state("done", id, data);
       const where = describe(id, event);
       const failed = type === "session.execution.failed";
       const body = failed
@@ -344,6 +387,7 @@ export function createMuisPlugin({ reportAgent, notify }) {
      */
     prompt(sessionID) {
       report(sessionID);
+      state("working", sessionID, {});
       notify(["--running", "--session", sessionID]);
     },
   };

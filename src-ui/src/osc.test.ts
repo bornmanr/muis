@@ -64,8 +64,11 @@ describe("OscParser", () => {
     expect(p.push(enc.encode(`${ESC}]9;a;b;c\x07`))).toEqual([
       { type: "notify", title: null, body: "a;b;c", source: "osc9" },
     ]);
-    // 9;4 progress and 9;9 cwd are ConEmu extensions, not notifications.
-    expect(p.push(enc.encode(`${ESC}]9;4;1;50\x07`))).toEqual([]);
+    // 9;4 is progress (its own event), 9;9 is ConEmu cwd — neither is a
+    // notification.
+    expect(p.push(enc.encode(`${ESC}]9;4;1;50\x07`))).toEqual([
+      { type: "progress", state: 1, percent: 50 },
+    ]);
     expect(p.push(enc.encode(`${ESC}]9;9;/home/user\x07`))).toEqual([]);
   });
 
@@ -178,5 +181,43 @@ describe("OscParser", () => {
     ]);
     expect(p.push(enc.encode(`${ESC}]133;D;7\x1b\\`))).toEqual([{ type: "cmd-end", exit: 7 }]);
     expect(p.push(enc.encode(`${ESC}]133;D\x07`))).toEqual([{ type: "cmd-end", exit: null }]);
+  });
+
+  it("reads OSC 9;4 progress without treating it as a notification", () => {
+    const p = new OscParser();
+    expect(p.push(enc.encode(`${ESC}]9;4;1;42\x07`))).toEqual([
+      { type: "progress", state: 1, percent: 42 },
+    ]);
+    // No percentage is indeterminate, not a message.
+    expect(p.push(enc.encode(`${ESC}]9;4;3\x07`))).toEqual([
+      { type: "progress", state: 3, percent: null },
+    ]);
+    // Clearing progress.
+    expect(p.push(enc.encode(`${ESC}]9;4;0\x07`))).toEqual([
+      { type: "progress", state: 0, percent: null },
+    ]);
+    // Out-of-range percentages clamp instead of producing a broken bar.
+    expect(p.push(enc.encode(`${ESC}]9;4;1;250\x07`))).toEqual([
+      { type: "progress", state: 1, percent: 100 },
+    ]);
+  });
+
+  it("still reads a plain OSC 9 message", () => {
+    const p = new OscParser();
+    expect(p.push(enc.encode(`${ESC}]9;build done\x07`))).toEqual([
+      { type: "notify", title: null, body: "build done", source: "osc9" },
+    ]);
+  });
+
+  it("reads the OSC 777 agent-state fallback and rejects unknown states", () => {
+    const p = new OscParser();
+    expect(p.push(enc.encode(`${ESC}]777;muis-state;blocked\x07`))).toEqual([
+      { type: "agent-state", state: "blocked" },
+    ]);
+    expect(p.push(enc.encode(`${ESC}]777;muis-state;running\x07`))).toEqual([]);
+    // The notify subtype keeps working.
+    expect(p.push(enc.encode(`${ESC}]777;notify;t;body\x07`))).toEqual([
+      { type: "notify", title: "t", body: "body", source: "osc777" },
+    ]);
   });
 });
