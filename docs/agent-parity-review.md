@@ -463,3 +463,8 @@ Planned phases if the recommendations stand:
 | D11 | **yes (full)** | URL bar, nav, external-open, devtools/new-tab, remembered URL per workspace. |
 | D12 | **yes (core + browser)** | JSON over `$XDG_RUNTIME_DIR` socket, 0600, peer-uid check, never TCP; reuses the 8 IPC frames; per-verb policy + audit log for `send`. |
 | D13 | **yes (MCP + plugins)** | `muis mcp` over stdio wraps the D12 socket and is declared in both opencode and codex configs; the opencode server/TUI plugins stay for hooks, route tracking and session-id resolution. |
+| D14 | **yes (tab + taskbar)** | Parse OSC 9;4 (clear/normal/error/indeterminate/paused); thin progress line in the tab; KDE launcher progress; same strip carries the state word. |
+| D15 | **yes (installer)** | Idempotent marked snippets; fish `conf.d`, zsh/bash sourced file; `--uninstall`; tested against starship/oh-my-posh. |
+| D16 | **defer** | Trigger: D15 shipped and the last-command bar proves insufficient. |
+| D17 | **yes (links + hints)** | Conservative matcher; ctrl-click open, ctrl+shift-click copy; paths never executed; hints chord. |
+| D18 | **yes (all three)** | Multi-line confirm when not in bracketed mode, paste-as-one-line, warn on paste while a blocked prompt is focused. |
