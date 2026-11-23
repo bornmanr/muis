@@ -444,4 +444,4 @@ Planned phases if the recommendations stand:
 | D10 | **yes (always available)** | No per-workspace toggle. Must keep: disposable profile by default, explicit opt-in "use my signed-in session" (marked in the pane), no cookie import, no auto-navigate to URLs from terminal output. Browser mode cannot isolate (iframe) → automation off there by default. |
 | D11 | **yes (full)** | URL bar, nav, external-open, devtools/new-tab, remembered URL per workspace. |
 | D12 | **yes (core + browser)** | JSON over `$XDG_RUNTIME_DIR` socket, 0600, peer-uid check, never TCP; reuses the 8 IPC frames; per-verb policy + audit log for `send`. |
-| D13 | **yes (plugins only)** | Grow the existing opencode server/TUI plugins; no MCP server until a second agent host is in use. |
+| D13 | **yes (MCP + plugins)** | `muis mcp` over stdio wraps the D12 socket and is declared in both opencode and codex configs; the opencode server/TUI plugins stay for hooks, route tracking and session-id resolution. |
