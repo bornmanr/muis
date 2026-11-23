@@ -7,7 +7,7 @@ agent console field, and a numbered decision deck to accept, reject or defer.
 
 How to read: §2 is what muis is today. §3–§5 are the comparison and the
 resulting gap/opportunity list. §6 is the only part that needs a decision —
-32 items, each with one line of "what", "who has it", "why it fits", effort,
+34 items, each with one line of "what", "who has it", "why it fits", effort,
 and a recommendation. §7 is what must stay out.
 
 Effort scale: **S** ≤ 1 day · **M** 1–3 days · **L** 1–2 weeks · **XL** > 2 weeks.
@@ -165,7 +165,7 @@ and is at parity or ahead on **native chrome**, **browser pane**, and
 
 ---
 
-## 6. Decision deck (32 items)
+## 6. Decision deck (34 items)
 
 Verdict: **pending** → yes / no / defer. Recommendation is advisory only.
 
@@ -397,6 +397,31 @@ Why: `fontSize` already exists in config but has no runtime chord, and
 zooming a TUI agent means zooming the terminal.
 Recommendation: **yes**.
 
+### Rendering and output (added on review)
+
+**D33 · Viewer pane ("show file")** — cmux browser pane, Warp markdown
+blocks, macOS Quick Look
+Generalize the right dock from "web preview" into a local viewer:
+`muis view <path>` renders images, PDFs, markdown, HTML, diffs and JSON;
+`muis view --capture` renders a captured command block. Same pane, same D12
+verbs, no VT changes and no inline-image protocols.
+Effort **M** · Risk: low (WebKit already renders all of it; keep the path
+scope to the workspace by default and never fetch remote content for a local
+file).
+Why: this covers 80% of what people want inline images for, plus the things
+inline images cannot do (markdown, PDFs, diffs).
+Recommendation: **yes**.
+
+**D34 · Rendered markdown for agent output** — Warp, Hermes IDE agent view
+Problem: agent messages arrive as raw text, so `**bold**` and `#` headers show
+literally (observed in this review with opencode's TUI).
+Two shapes: (a) nothing in muis — the agent's own UI should render its
+markdown, and this is an opencode renderer issue; (b) an explicit
+"render this block" action that sends a captured block through D33.
+Effort **M** for (b) · Risk: guessing which text is markdown; must stay
+explicit and never automatic.
+Recommendation: **defer** unless (b) falls out of D33 for free.
+
 ---
 
 ## 7. Non-goals (would change what muis is)
@@ -468,3 +493,5 @@ Planned phases if the recommendations stand:
 | D16 | **defer** | Trigger: D15 shipped and the last-command bar proves insufficient. |
 | D17 | **yes (links + hints)** | Conservative matcher; ctrl-click open, ctrl+shift-click copy; paths never executed; hints chord. |
 | D18 | **yes (all three)** | Multi-line confirm when not in bracketed mode, paste-as-one-line, warn on paste while a blocked prompt is focused. |
+| D19 | **yes (full)** | Documented stable keys, theme pack directory, live reload for theme/font only. |
+| D20 | **yes (fallback only)** | Expose/document the font fallback stack. No ligature work (xterm.js has no native support). |
