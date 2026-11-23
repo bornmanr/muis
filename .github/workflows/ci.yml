@@ -137,6 +137,39 @@ jobs:
       - run: npm test
         working-directory: node-host
 
+  # Both browser hosts must answer one protocol. Run the same contract tests
+  # against the Rust binary and the Node script so neither can drift silently.
+  parity:
+    needs: build-ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-parity
+      - uses: actions/download-artifact@v6
+        with:
+          name: ui-dist
+          path: src-ui/dist
+      - run: cargo build -p muis-server
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/parity/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
+      # The Node host imports node-pty, which builds from source on Linux.
+      - run: npm ci
+        working-directory: node-host
+      - run: npm ci
+        working-directory: tests/parity
+      - name: Run the same contract tests against both hosts
+        working-directory: tests/parity
+        env:
+          MUIS_RUST_BIN: ${{ github.workspace }}/target/debug/muis-server
+        run: npm test
+
   browser-e2e:
     needs: build-ui
     runs-on: ubuntu-latest

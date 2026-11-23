@@ -171,10 +171,22 @@ async function readText(file) {
   }
 }
 
+/** Case-insensitive, code-unit order — the same order the Rust host uses. */
+function byName(a, b) {
+  const left = a.toLowerCase();
+  const right = b.toLowerCase();
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 async function writeJsonFile(file, json) {
-  JSON.parse(json); // refuse to write anything that is not JSON
+  let parsed;
+  try {
+    parsed = JSON.parse(json); // refuse to write anything that is not JSON
+  } catch (error) {
+    throw new Error(`invalid json: ${error.message}`);
+  }
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, JSON.stringify(JSON.parse(json), null, 2), "utf8");
+  await fs.writeFile(file, JSON.stringify(parsed, null, 2), "utf8");
 }
 
 function base64(bytes) {
@@ -291,7 +303,7 @@ async function rpc(method, args, state) {
         return entries
           .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && !entry.name.startsWith("$"))
           .map((entry) => entry.name)
-          .sort()
+          .sort(byName)
           .slice(0, limit);
       } catch {
         return [];
@@ -304,7 +316,7 @@ async function rpc(method, args, state) {
         return entries
           .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && !entry.name.startsWith("$"))
           .map((entry) => ({ name: entry.name, path: path.join(args.path, entry.name), dir: true }))
-          .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+          .sort((a, b) => byName(a.name, b.name))
           .slice(0, 500);
       } catch {
         return [];
