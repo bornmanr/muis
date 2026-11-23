@@ -7,7 +7,7 @@ agent console field, and a numbered decision deck to accept, reject or defer.
 
 How to read: §2 is what muis is today. §3–§5 are the comparison and the
 resulting gap/opportunity list. §6 is the only part that needs a decision —
-31 items, each with one line of "what", "who has it", "why it fits", effort,
+32 items, each with one line of "what", "who has it", "why it fits", effort,
 and a recommendation. §7 is what must stay out.
 
 Effort scale: **S** ≤ 1 day · **M** 1–3 days · **L** 1–2 weeks · **XL** > 2 weeks.
@@ -147,7 +147,7 @@ and is at parity or ahead on **native chrome**, **browser pane**, and
 
 ---
 
-## 6. Decision deck (31 items)
+## 6. Decision deck (32 items)
 
 Verdict: **pending** → yes / no / defer. Recommendation is advisory only.
 
@@ -361,6 +361,19 @@ evaluate Hermes Agent on a scratch profile.
 Effort **S** (dotfiles/config, outside this repo) · Risk: memory rot.
 Recommendation: **yes**, in dotfiles — do not put it in muis.
 
+### Runtime comfort (added on review)
+
+**D32 · Terminal zoom chords** — every GUI terminal (Warp, iTerm2, GNOME
+Terminal)
+`Ctrl+=` / `Ctrl+-` / `Ctrl+0` resize the terminal text live (xterm
+`fontSize` + `fit()`), persisted to `AppConfig.fontSize`; optional
+`Ctrl+Shift+=` for whole-window scale (chrome + terminal) when reading an
+agent TUI from across the room.
+Effort **S** · Risk: low (xterm re-fit and WebGL atlas rebuild).
+Why: `fontSize` already exists in config but has no runtime chord, and
+zooming a TUI agent means zooming the terminal.
+Recommendation: **yes**.
+
 ---
 
 ## 7. Non-goals (would change what muis is)
@@ -401,8 +414,18 @@ Recommendation: **yes**, in dotfiles — do not put it in muis.
 
 Planned phases if the recommendations stand:
 
-- **P1 (agent awareness, ~1 week):** D04 → D05 → D07 → D09 → D14 → D17 → D18.
+- **P1 (agent awareness, ~1 week):** D04 → D05 → D07 → D09 → D14 → D17 → D18
+  → D32.
 - **P2 (persistence, its own project):** D01 → D02 → D03.
 - **P3 (control surface):** D12 → D10 → D13.
 - **P4 (workflow niceties):** D22 → D23 → D30 → D15 → D19.
 - **Never:** D06, D21, D24, D25, D27, D28.
+
+---
+
+## 10. Verdict ledger (filled during review)
+
+| Item | Verdict | Constraints / notes |
+|---|---|---|
+| D01 | **yes** | PTY-centric, not agent-centric. Idle reaper with configurable timer; park idle/done tabs instead of keeping processes; byte-capped daemon ring buffer (not lines); parent-death signal on workers; start-up sweep by pid+start-time; `daemon status/stop`; one instance per `MUIS_HOME`. Must not assume "one agent process per tab" (future APC layer). |
+
