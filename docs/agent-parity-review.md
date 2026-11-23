@@ -495,3 +495,6 @@ Planned phases if the recommendations stand:
 | D18 | **yes (all three)** | Multi-line confirm when not in bracketed mode, paste-as-one-line, warn on paste while a blocked prompt is focused. |
 | D19 | **yes (full)** | Documented stable keys, theme pack directory, live reload for theme/font only. |
 | D20 | **yes (fallback only)** | Expose/document the font fallback stack. No ligature work (xterm.js has no native support). |
+| D21 | **no** | No image protocols in the grid. Covered instead by D33. |
+| D33 | **yes (viewer)** | `muis view <path>` + `--capture`; images, PDFs, markdown, HTML, diffs, JSON in the existing dock; workspace-scoped paths, no remote fetch for local files. |
+| D34 | **defer** | Rendering agent markdown belongs to the agent's client (opencode TUI). Revisit only if a captured-block render falls out of D33 for free. |
