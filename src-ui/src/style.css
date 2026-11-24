@@ -396,3 +396,5 @@ body{
 .xterm-viewport::-webkit-scrollbar-track{background:transparent}
 /* A pinned tab keeps a glyph and its chosen accent; it sorts to the front. */
 .tab .t-pin{font-size:10px; line-height:1; flex:0 0 auto; opacity:.85}
+/* A parked tab keeps its place and its scrollback but has no process. */
+.t-state.parked{background:var(--bg1); color:var(--dim); border:1px solid var(--border)}

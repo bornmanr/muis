@@ -243,6 +243,11 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
   opencode reopen with the saved session; plain shells start clean because
   scrollback is not saved.
 - Tabs track `cd` via OSC 7; fish on Veldmuis needs no setup.
+- Idle agent tabs are parked: after `parkAfterMinutes` (default 30, `0`
+  disables, config file only for now) a finished, off-screen tab with a
+  resumable agent session has its process closed. The tab, its scrollback
+  and its name stay; clicking it starts a fresh pty and resumes the saved
+  session. `working` tabs are never parked and `blocked` ones wait 8 hours.
 - Quitting with busy tabs asks first.
 - `muis --testmode` opens a throwaway window: it starts from a fresh
   session and never writes settings, so the real config is left untouched.

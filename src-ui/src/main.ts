@@ -22,6 +22,7 @@ import { collectMatches, type SearchHit, type SearchScope, type SearchableTab } 
 import { resolveShortcut } from "./shortcuts";
 import { DoneTracker, sidebarAttention, tabAttentionLabel, type Attention } from "./done";
 import { AgentStateTracker, agentLabel, isAgentState, stateChip, type AgentState } from "./agentState";
+import { shouldPark } from "./park";
 import { NotifyRouter, notifyEventFromCli, notifyEventFromCommand, type CliNotify } from "./notify";
 import {
   isInjectedResume,
@@ -263,6 +264,10 @@ const restoreCommands = new Map<string, string>();
 const opencodeSessionsCache = new Map<string, Promise<AgentSessionInfo[]>>();
 let saveTimer: number | undefined;
 let lastSaved = "";
+/** Tabs whose pty was parked: the tab stays, the process is gone. */
+const parkedTabs = new Set<string>();
+/** Last keystroke per tab, for the parking policy. */
+const lastInputAt = new Map<string, number>();
 /** Tabs that have produced any pty output, and callbacks waiting for it. */
 const sawOutput = new Set<string>();
 const outputWaiters = new Map<string, () => void>();
@@ -698,6 +703,73 @@ function beep(): void {
   }
 }
 
+/** Spawn (or respawn) a tab's pty and pipe its output into the view. */
+function spawnTabPty(sessionId: string, tab: Tab, term: Terminal): void {
+  if (!BACKEND) return;
+  activity.spawnedAt.set(tab.id, Date.now());
+    void (async () => {
+      try {
+        const shell = await defaultShell();
+        renderCommandHead(tab.id);
+        const testCommand = await liveTestCommand();
+        await client.spawnTab(
+          sessionId,
+          tab.id,
+          shell,
+          tab.cwd,
+          80,
+          24,
+          (data) => {
+            activity.lastOutputAt.set(tab.id, Date.now());
+            sawOutput.add(tab.id);
+            outputWaiters.get(tab.id)?.();
+            term.write(data);
+            observeOsc(sessionId, tab, data);
+            armIdleFallback(tab.id);
+            if (testCommand && !liveTestCommandSent.has(tab.id)) {
+              liveTestCommandSent.add(tab.id);
+              // Wait until the shell has emitted its first prompt/banner
+              // before exercising the exact UI -> worker -> PTY input path.
+              window.setTimeout(() => {
+                trackInput(tab.id, `${testCommand}\n`, false);
+                void client
+                  .write(sessionId, tab.id, enc.encode(`${testCommand}\n`))
+                  .catch(() => {});
+              }, 1000);
+            }
+          },
+          (code) => {
+            // A parked pty exits on purpose: keep the tab and its scrollback.
+            if (parkedTabs.has(tab.id)) {
+              renderTabs();
+              renderSessions();
+              return;
+            }
+            activity.exited.add(tab.id);
+            term.writeln(`\r\n[process exited${code === null ? "" : ` (${code})`}]`);
+            if (!isTabVisible(tab.id)) {
+              doneTabs.mark(tab.id);
+            }
+            renderTabs();
+            renderSessions();
+            updateWindowTitle();
+            // Deferred so the view's own exit callback finishes first.
+            window.setTimeout(() => dropSessionIfLastTab(sessionId, tab.id), 0);
+          },
+        );
+        // The pty exists now. The fit that ran when the tab was created may
+        // have raced the spawn and been dropped by the worker, leaving the
+        // pty at the default size; size it to the real surface here too.
+        const spawned = views.get(tab.id);
+        if (spawned && spawned.box.classList.contains("active")) {
+          fitShown(sessionId, tab, spawned);
+        }
+      } catch (e) {
+        term.writeln(`\r\n[failed to spawn pty: ${String(e)}]`);
+      }
+  })();
+}
+
 function ensureView(sessionId: string, tab: Tab): TabView {
   let view = views.get(tab.id);
   if (view) {
@@ -839,62 +911,7 @@ function ensureView(sessionId: string, tab: Tab): TabView {
   }
 
   if (BACKEND) {
-    activity.spawnedAt.set(tab.id, Date.now());
-    void (async () => {
-      try {
-        const shell = await defaultShell();
-        renderCommandHead(tab.id);
-        const testCommand = await liveTestCommand();
-        await client.spawnTab(
-          sessionId,
-          tab.id,
-          shell,
-          tab.cwd,
-          80,
-          24,
-          (data) => {
-            activity.lastOutputAt.set(tab.id, Date.now());
-            sawOutput.add(tab.id);
-            outputWaiters.get(tab.id)?.();
-            term.write(data);
-            observeOsc(sessionId, tab, data);
-            armIdleFallback(tab.id);
-            if (testCommand && !liveTestCommandSent.has(tab.id)) {
-              liveTestCommandSent.add(tab.id);
-              // Wait until the shell has emitted its first prompt/banner
-              // before exercising the exact UI -> worker -> PTY input path.
-              window.setTimeout(() => {
-                trackInput(tab.id, `${testCommand}\n`, false);
-                void client
-                  .write(sessionId, tab.id, enc.encode(`${testCommand}\n`))
-                  .catch(() => {});
-              }, 1000);
-            }
-          },
-          (code) => {
-            activity.exited.add(tab.id);
-            term.writeln(`\r\n[process exited${code === null ? "" : ` (${code})`}]`);
-            if (!isTabVisible(tab.id)) {
-              doneTabs.mark(tab.id);
-            }
-            renderTabs();
-            renderSessions();
-            updateWindowTitle();
-            // Deferred so the view's own exit callback finishes first.
-            window.setTimeout(() => dropSessionIfLastTab(sessionId, tab.id), 0);
-          },
-        );
-        // The pty exists now. The fit that ran when the tab was created may
-        // have raced the spawn and been dropped by the worker, leaving the
-        // pty at the default size; size it to the real surface here too.
-        const spawned = views.get(tab.id);
-        if (spawned && spawned.box.classList.contains("active")) {
-          fitShown(sessionId, tab, spawned);
-        }
-      } catch (e) {
-        term.writeln(`\r\n[failed to spawn pty: ${String(e)}]`);
-      }
-    })();
+    spawnTabPty(sessionId, tab, term);
     term.onData((data) => {
       trackInput(tab.id, data);
       void client.write(sessionId, tab.id, enc.encode(data));
@@ -1155,6 +1172,9 @@ function renderAll(): void {
   // tab stays marked until the user works in it (input or next command).
   const active = ws?.tabs[ws.active];
   if (active) doneTabs.see(active.id);
+  // Selecting a parked tab brings its process back, then the restored agent
+  // session resumes inside it. Never on init: renderAll runs before the pump.
+  if (active && parkedTabs.has(active.id)) void resumeParked(active);
   updateWindowTitle();
   sidebar.style.display = cfg.showSessions ? "" : "none";
   renderSessions();
@@ -1677,18 +1697,28 @@ function tabElement(ws: Workspace, tab: Tab, selected: boolean): HTMLElement {
   // *why* the tab is waiting (blocked vs finished), which output never can.
   const agentState = agentStates.stateOf(tab.id, Date.now());
   const dead = activity.exited.has(tab.id);
+  const parked = parkedTabs.has(tab.id);
   const attention = tabAttention(tab.id);
-  const chip = dead
-    ? tabAttentionLabel(attention, true)
-    : stateChip(agentState) ?? tabAttentionLabel(attention, false);
+  const chip = parked
+    ? "parked"
+    : dead
+      ? tabAttentionLabel(attention, true)
+      : stateChip(agentState) ?? tabAttentionLabel(attention, false);
   if (chip) {
     const cls =
       "t-state" +
-      (agentState === "blocked" ? " blocked" : attention === "unseen" ? " unseen" : "");
+      (parked
+        ? " parked"
+        : agentState === "blocked"
+          ? " blocked"
+          : attention === "unseen"
+            ? " unseen"
+            : "");
     d.append(el("span", cls, chip));
   }
   const agentText = agentLabel(agentStates.get(tab.id));
-  if (agentText) {
+  if (parked) d.title = "parked — click to resume";
+  else if (agentText) {
     d.title = dead ? `${agentText} — exited` : `${agentText} — ${agentState ?? "unknown"}`;
   }
   if (agentState === "blocked") d.classList.add("blocked");
@@ -1835,6 +1865,8 @@ function tickClock(): void {
   };
   f();
   setInterval(f, 1000);
+  // Parking is a slow policy; a 30s sweep is plenty and costs nothing.
+  setInterval(sweepParked, 30_000);
 }
 
 /* ---------------- side panel slot ---------------- */
@@ -2337,6 +2369,7 @@ async function applySettings(): Promise<void> {
       Object.entries(segOpts).map(([id, cb]) => [id, cb.checked]),
     ),
     workspaceThemes: cfg.workspaceThemes,
+    parkAfterMinutes: cfg.parkAfterMinutes,
   };
   if (BACKEND) void shellCall("config_save", { json: JSON.stringify(cfg) }).catch(() => {});
   applyTheme(cfg.theme);
@@ -2873,6 +2906,7 @@ function armIdleFallback(tabId: string): void {
  * work: the restore path relies on that rule.
  */
 function trackInput(tabId: string, data: string, fromUser = true): void {
+  if (fromUser) lastInputAt.set(tabId, Date.now());
   if (!commandTracker.onInput(tabId, data)) return;
   renderCommandHead(tabId);
   armIdleFallback(tabId);
@@ -2937,6 +2971,76 @@ function maybeNotifyFinished(tabId: string): void {
     tab,
     notifyEventFromCommand(label, `${st.lastCmd ?? "command"} finished`),
   );
+}
+
+/* ---------------- parking ---------------- */
+
+/**
+ * Close the pty of a finished, invisible, long-idle agent tab. The tab and
+ * its scrollback stay; the saved session id makes it resumable on click.
+ */
+async function parkTab(ws: Workspace, tab: Tab): Promise<void> {
+  if (parkedTabs.has(tab.id) || !tab.agentSession) return;
+  parkedTabs.add(tab.id);
+  agentStates.clear(tab.id);
+  doneTabs.clear(tab.id);
+  reportDebugStage("tab-parked", { tab: tab.id });
+  views.get(tab.id)?.term.writeln("\r\n[parked — click the tab to resume]");
+  await client.kill(ws.id, tab.id).catch(() => {});
+  renderTabs();
+  renderSessions();
+  updateWindowTitle();
+}
+
+/** Bring a parked tab back: fresh pty, then the saved agent session. */
+async function resumeParked(tab: Tab): Promise<void> {
+  if (!parkedTabs.has(tab.id)) return;
+  const wsIndex = store.workspaces.findIndex((w) => w.tabs.some((t) => t.id === tab.id));
+  const ws = store.workspaces[wsIndex];
+  if (!ws) return;
+  parkedTabs.delete(tab.id);
+  // The restore path de-dupes launches per tab; resuming is a new launch.
+  agentLaunched.delete(tab.id);
+  lastInputAt.set(tab.id, Date.now());
+  reportDebugStage("tab-resumed", { tab: tab.id });
+  const view = views.get(tab.id);
+  if (view) spawnTabPty(ws.id, tab, view.term);
+  renderTabs();
+  renderSessions();
+  // The pump waits for the fresh prompt before typing the resume command.
+  restorePump.push([
+    { wsIndex, tabIndex: ws.tabs.findIndex((t) => t.id === tab.id), tabId: tab.id },
+  ]);
+}
+
+/** One pass of the parking policy; cheap enough to run on a timer. */
+function sweepParked(): void {
+  if (!BACKEND || testModeActive) return;
+  const minutes = cfg.parkAfterMinutes;
+  if (!minutes || minutes <= 0) return;
+  const limit = minutes * 60_000;
+  const now = Date.now();
+  for (const ws of store.workspaces) {
+    for (const tab of ws.tabs) {
+      if (parkedTabs.has(tab.id)) continue;
+      const report = agentStates.get(tab.id);
+      const since = lastInputAt.get(tab.id) ?? activity.spawnedAt.get(tab.id) ?? now;
+      const visible = store.currentWorkspace() === ws && ws.tabs[ws.active]?.id === tab.id;
+      if (
+        shouldPark({
+          state: agentStates.stateOf(tab.id, now),
+          visible,
+          exited: activity.exited.has(tab.id),
+          hasAgentSession: Boolean(tab.agentSession),
+          idleMs: now - since,
+          idleLimitMs: limit,
+          sinceReportMs: report ? now - report.at : null,
+        })
+      ) {
+        void parkTab(ws, tab);
+      }
+    }
+  }
 }
 
 function forgetTabState(tabId: string): void {

@@ -23,6 +23,8 @@ export interface AppConfig {
   statusbar: Record<string, boolean>;
   /** Accent theme per workspace name (falls back to `theme`). */
   workspaceThemes: Record<string, string>;
+  /** Park finished agent tabs after this many idle minutes; 0 disables. */
+  parkAfterMinutes: number;
 }
 
 /** Accent theme for a workspace: its own, else the global default. */
@@ -60,6 +62,7 @@ export function defaultConfig(): AppConfig {
     bell: "none",
     statusbar: {},
     workspaceThemes: {},
+    parkAfterMinutes: 30,
   };
 }
 
@@ -136,6 +139,10 @@ export function configFromJSON(json: string): AppConfig {
         : base.bell,
     statusbar: parseBoolMap(r.statusbar, base.statusbar),
     workspaceThemes: parseStringMap(r.workspaceThemes, base.workspaceThemes),
+    parkAfterMinutes:
+      typeof r.parkAfterMinutes === "number" && Number.isFinite(r.parkAfterMinutes)
+        ? Math.min(1440, Math.max(0, Math.floor(r.parkAfterMinutes)))
+        : base.parkAfterMinutes,
   };
 }
 

@@ -17,6 +17,7 @@ describe("AppConfig", () => {
       bell: "none",
       statusbar: {},
       workspaceThemes: {},
+      parkAfterMinutes: 30,
     });
     expect(configFromJSON("")).toEqual(defaultConfig());
   });
@@ -91,6 +92,7 @@ describe("AppConfig", () => {
       bell: "both",
       statusbar: { clock: false },
       workspaceThemes: { dev: "nord" },
+      parkAfterMinutes: 45,
     };
     expect(configFromJSON(JSON.stringify(cfg))).toEqual(cfg);
   });
