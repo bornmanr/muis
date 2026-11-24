@@ -12,6 +12,8 @@ path = "src/lib.rs"
 muis-core = { path = "../muis-core" }
 serde = { version = "1", features = ["derive"] }
 log = "0.4"
-
-[dev-dependencies]
 serde_json = "1"
+
+[[bin]]
+name = "muis-daemon"
+path = "src/bin/muis-daemon.rs"

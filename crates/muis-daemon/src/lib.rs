@@ -9,6 +9,8 @@
 //! the `MUIS_AGENT_BIN` sidecar hint), so nothing here knows about sockets or
 //! packaging.
 
+pub mod protocol;
+
 use muis_core::ipc::{decode_worker, WorkerToUi};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -192,6 +194,13 @@ impl WorkerPool {
             .flush()
             .map_err(|e| format!("worker write failed: {e}"))?;
         Ok(())
+    }
+
+    /// Sessions that currently have a worker.
+    pub fn sessions(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.workers.lock().unwrap().keys().cloned().collect();
+        ids.sort();
+        ids
     }
 
     /// Kill the session's worker and forget it. Next spawn starts fresh.
