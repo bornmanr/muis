@@ -50,6 +50,11 @@ pub fn snor_history_file() -> PathBuf {
     state_dir().join("snor.json")
 }
 
+/// Downloaded GGUF presets. Weights are never bundled with muis.
+pub fn snor_models_dir() -> PathBuf {
+    state_dir().join("models")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,5 +66,6 @@ mod tests {
         assert_eq!(config_file(), config_dir().join("muis.json"));
         assert_eq!(sessions_file(), state_dir().join("sessions.json"));
         assert_eq!(snor_history_file(), state_dir().join("snor.json"));
+        assert_eq!(snor_models_dir(), state_dir().join("models"));
     }
 }

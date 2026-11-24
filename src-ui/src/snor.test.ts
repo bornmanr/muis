@@ -3,6 +3,7 @@ import {
   SNOR_MAX_CONTEXT_CHARS,
   SNOR_MAX_SAVED_TURNS,
   buildSnorContext,
+  formatBytes,
   scrubSecrets,
   parseSnorHistory,
   parseSnorSlash,
@@ -170,5 +171,13 @@ describe("snor labels", () => {
     expect(snorStateLabel("streaming")).toBe("answering…");
     expect(snorStateLabel("weird")).toBe("weird");
     expect(snorStateLabel(undefined)).toBe("stopped");
+  });
+
+  it("formats catalog sizes", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(1536)).toBe("1.50 KiB");
+    expect(formatBytes(1117320736)).toBe("1.04 GiB");
+    expect(formatBytes(5027783488)).toBe("4.68 GiB");
   });
 });
