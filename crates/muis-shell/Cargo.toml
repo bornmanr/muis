@@ -11,6 +11,9 @@ path = "src/main.rs"
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-notification = "2"
+# Same stack the Tauri plugin uses on Linux; we need the action callback so a
+# toast click can focus the tab it came from.
+notify-rust = "4"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

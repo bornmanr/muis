@@ -2247,6 +2247,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "muis-core",
+ "notify-rust",
  "serde",
  "serde_json",
  "simplelog",
