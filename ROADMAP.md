@@ -51,6 +51,12 @@ Legend: `[x]` settled+locked · `[~]` decided, needs test · `[ ]` open.
       per workspace width, supervised `llama-server` child (lazy start,
       loopback + per-launch key, `/health`), streamed chat with stop,
       explicit terminal context, and settings for model/server paths
+- [x] Snor conversations persist per workspace (`snor.json`); attached
+      terminal context is never written to disk
+- [x] Snor read-only workspace lookups (`/git`, `/docs`, `/file`) are
+      workspace-scoped; no model-chosen paths and no writes
+- [x] Snor model catalog: three verified presets download on request
+      with resume and sha256 checks; weights are never bundled
 
 ## To build (in suggested order)
 

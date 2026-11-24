@@ -23,6 +23,14 @@ covers the architecture, a phased build, and the decisions still open.
   toggled with `ctrl+shift+a` or the mouse indicator next to settings.
 - Settings: model path, `llama-server` override, context size, GPU
   layers, attached scrollback lines, and opt-in secret masking.
+- History: per-workspace conversations are restored from `snor.json`.
+  Attached terminal context is kept in memory only and never written.
+- Read-only lookups: `/git`, `/docs`, and `/file <path>` are resolved
+  by the shell inside the workspace. The model cannot choose a path,
+  and nothing can write.
+- Models: settings lists three Apache-2.0 Q4_K_M presets and downloads
+  one only on request, with resume and sha256 verification, into
+  `~/.local/share/muis/models/`. Browse still accepts any GGUF.
 - The slot: `SidePanelRegistry` (`src-ui/src/panels.ts`) with the docked
   right-side host in `src-ui/src/main.ts`; the dock now lives in the
   `.main` row and panels provide a mount callback.

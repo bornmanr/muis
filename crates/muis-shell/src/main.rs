@@ -13,6 +13,8 @@ mod bridge;
 mod logging;
 mod persist;
 mod snor;
+mod snor_models;
+mod snor_tools;
 
 use bridge::{EventSink, WorkerLaunch, WorkerPool, WORKER_EVENT};
 use muis_core::notify::ClientRequest;
@@ -144,6 +146,24 @@ fn sessions_save(json: String) -> Result<(), String> {
         return Ok(());
     }
     persist::write_json(&muis_core::paths::sessions_file(), &json)
+}
+
+/// Snor conversations: prompts and answers only, never attached terminal
+/// context. Test mode starts empty and never writes.
+#[tauri::command]
+fn snor_history_load() -> Result<String, String> {
+    if test_mode() {
+        return Ok(String::new());
+    }
+    persist::read_text(&muis_core::paths::snor_history_file())
+}
+
+#[tauri::command]
+fn snor_history_save(json: String) -> Result<(), String> {
+    if test_mode() {
+        return Ok(());
+    }
+    persist::write_json(&muis_core::paths::snor_history_file(), &json)
 }
 
 /// Current git branch for a cwd; empty string when not a repo (or git
@@ -529,6 +549,94 @@ fn snor_cancel(engine: tauri::State<'_, Arc<SnorEngine>>) {
     engine.cancel();
 }
 
+/* ---------------- Snor read-only workspace lookups ---------------- */
+
+#[tauri::command]
+fn snor_git_status(cwd: String) -> Result<String, String> {
+    snor_tools::git_status(Path::new(&cwd))
+}
+
+#[tauri::command]
+fn snor_list_docs(cwd: String) -> Result<Vec<String>, String> {
+    snor_tools::list_docs(Path::new(&cwd))
+}
+
+#[tauri::command]
+fn snor_read_doc(cwd: String, path: String) -> Result<String, String> {
+    snor_tools::read_doc(Path::new(&cwd), &path, snor_tools::MAX_DOC_BYTES)
+}
+
+/* ---------------- Snor model catalog ---------------- */
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelEvent {
+    id: String,
+    phase: &'static str,
+    received: u64,
+    total: u64,
+    path: Option<String>,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn snor_models() -> Vec<snor_models::ModelInfo> {
+    snor_models::list(&muis_core::paths::snor_models_dir())
+}
+
+/// Explicit download of one catalog preset. Returns immediately; the UI
+/// follows `snor-model` events for progress and completion.
+#[tauri::command]
+fn snor_model_download(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let preset = *snor_models::find(&id).ok_or("unknown model preset")?;
+    let dir = muis_core::paths::snor_models_dir();
+    std::thread::spawn(move || {
+        let mut last = std::time::Instant::now();
+        let result = snor_models::download(&dir, &preset, |received, total| {
+            if received == total || last.elapsed() >= std::time::Duration::from_millis(200) {
+                last = std::time::Instant::now();
+                let _ = app.emit(
+                    "snor-model",
+                    ModelEvent {
+                        id: preset.id.into(),
+                        phase: "downloading",
+                        received,
+                        total,
+                        path: None,
+                        error: None,
+                    },
+                );
+            }
+        });
+        let event = match result {
+            Ok(path) => ModelEvent {
+                id: preset.id.into(),
+                phase: "done",
+                received: preset.size,
+                total: preset.size,
+                path: Some(path.to_string_lossy().into_owned()),
+                error: None,
+            },
+            Err(error) => ModelEvent {
+                id: preset.id.into(),
+                phase: "error",
+                received: 0,
+                total: preset.size,
+                path: None,
+                error: Some(error),
+            },
+        };
+        let _ = app.emit("snor-model", event);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn snor_model_delete(id: String) -> Result<(), String> {
+    let preset = *snor_models::find(&id).ok_or("unknown model preset")?;
+    snor_models::delete(&muis_core::paths::snor_models_dir(), &preset)
+}
+
 /// NVIDIA + KWin explicit sync kills WebKitGTK's dmabuf fast path with
 /// "explicit sync is used, but no acquire point is set" (native Wayland
 /// only; XWayland never hits it). Fall back to shared-memory compositing
@@ -571,6 +679,8 @@ fn main() {
             config_save,
             sessions_load,
             sessions_save,
+            snor_history_load,
+            snor_history_save,
             git_branch,
             install_opencode_plugin,
             opencode_sessions,
@@ -584,7 +694,13 @@ fn main() {
             snor_start,
             snor_stop,
             snor_send,
-            snor_cancel
+            snor_cancel,
+            snor_git_status,
+            snor_list_docs,
+            snor_read_doc,
+            snor_models,
+            snor_model_download,
+            snor_model_delete
         ])
         .setup(|app| {
             log::info!(

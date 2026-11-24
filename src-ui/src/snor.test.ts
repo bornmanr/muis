@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   SNOR_MAX_CONTEXT_CHARS,
+  SNOR_MAX_SAVED_TURNS,
   buildSnorContext,
+  formatBytes,
   scrubSecrets,
+  parseSnorHistory,
+  parseSnorSlash,
+  serializeSnorHistory,
   snorModelName,
   snorPrompt,
   snorStateLabel,
   tailLines,
+  type SnorTurn,
 } from "./snor";
 
 describe("snor context", () => {
@@ -54,6 +60,28 @@ describe("snor context", () => {
   });
 });
 
+describe("snor slash commands", () => {
+  it("recognizes the read-only commands and their optional argument", () => {
+    expect(parseSnorSlash("/git")).toEqual({ command: "git", arg: "" });
+    expect(parseSnorSlash("  /GIT  ")).toEqual({ command: "git", arg: "" });
+    expect(parseSnorSlash("/git summarize the diff")).toEqual({
+      command: "git",
+      arg: "summarize the diff",
+    });
+    expect(parseSnorSlash("/docs")).toEqual({ command: "docs", arg: "" });
+    expect(parseSnorSlash("/file docs/plan.md")).toEqual({
+      command: "file",
+      arg: "docs/plan.md",
+    });
+  });
+
+  it("leaves prompts and unknown commands alone", () => {
+    expect(parseSnorSlash("what changed?")).toBeNull();
+    expect(parseSnorSlash("/rm -rf /")).toBeNull();
+    expect(parseSnorSlash("")).toBeNull();
+  });
+});
+
 describe("snor secrets", () => {
   it("masks known token shapes and credential lines", () => {
     const text = [
@@ -83,6 +111,53 @@ describe("snor secrets", () => {
   });
 });
 
+describe("snor history", () => {
+  it("saves prompts and answers but never terminal context", () => {
+    const turns: SnorTurn[] = [
+      { role: "user", text: "why?", context: "secret scrollback" },
+      { role: "assistant", text: "because" },
+    ];
+    const json = serializeSnorHistory([["w1", turns]]);
+    expect(json).not.toContain("secret scrollback");
+    expect(json).not.toContain("context");
+    expect(parseSnorHistory(json)).toEqual({
+      conversations: {
+        w1: [
+          { role: "user", text: "why?" },
+          { role: "assistant", text: "because" },
+        ],
+      },
+    });
+  });
+
+  it("drops empty assistant placeholders, empty conversations, and junk", () => {
+    const json = serializeSnorHistory([
+      ["a", [{ role: "user", text: "hi" }, { role: "assistant", text: "  " }]],
+      ["b", [{ role: "assistant", text: "" }]],
+    ]);
+    expect(parseSnorHistory(json).conversations).toEqual({ a: [{ role: "user", text: "hi" }] });
+    expect(parseSnorHistory("not json")).toEqual({ conversations: {} });
+    expect(parseSnorHistory("")).toEqual({ conversations: {} });
+    expect(parseSnorHistory('{"conversations":[]}')).toEqual({ conversations: {} });
+    expect(
+      parseSnorHistory(
+        '{"conversations":{"w":[{"role":"system","text":"x"},{"role":"user","text":5},{"role":"assistant","text":"ok"}]}}',
+      ).conversations,
+    ).toEqual({ w: [{ role: "assistant", text: "ok" }] });
+    expect(parseSnorHistory('{"conversations":{"w":"nope"}}')).toEqual({ conversations: {} });
+  });
+
+  it("caps long conversations to the newest turns", () => {
+    const turns: SnorTurn[] = Array.from({ length: SNOR_MAX_SAVED_TURNS + 10 }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      text: `t${i}`,
+    }));
+    const saved = parseSnorHistory(serializeSnorHistory([["w", turns]])).conversations.w;
+    expect(saved).toHaveLength(SNOR_MAX_SAVED_TURNS);
+    expect(saved[saved.length - 1].text).toBe(`t${turns.length - 1}`);
+  });
+});
+
 describe("snor labels", () => {
   it("shows the model file name only", () => {
     expect(snorModelName("/models/qwen.gguf")).toBe("qwen.gguf");
@@ -96,5 +171,13 @@ describe("snor labels", () => {
     expect(snorStateLabel("streaming")).toBe("answering…");
     expect(snorStateLabel("weird")).toBe("weird");
     expect(snorStateLabel(undefined)).toBe("stopped");
+  });
+
+  it("formats catalog sizes", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(1536)).toBe("1.50 KiB");
+    expect(formatBytes(1117320736)).toBe("1.04 GiB");
+    expect(formatBytes(5027783488)).toBe("4.68 GiB");
   });
 });
