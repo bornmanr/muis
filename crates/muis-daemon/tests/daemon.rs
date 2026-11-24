@@ -185,3 +185,53 @@ fn send_without_a_spawn_reports_an_error() {
         other => panic!("unexpected reply: {other:?}"),
     }
 }
+
+/// The control CLI speaks the same socket; it should see the daemon's
+/// sessions and exit cleanly when there are none.
+#[test]
+fn ctl_lists_live_sessions() {
+    let daemon = start_daemon();
+    let empty = Command::new(env!("CARGO_BIN_EXE_muis-ctl"))
+        .arg("--socket")
+        .arg(&daemon.socket)
+        .arg("ls")
+        .output()
+        .expect("run muis-ctl");
+    assert!(empty.status.success(), "muis-ctl ls failed");
+    assert_eq!(String::from_utf8_lossy(&empty.stdout).trim(), "");
+
+    // Register a session through the protocol, then ask the CLI.
+    let (mut reader, mut stream) = connect(&daemon.socket);
+    send(
+        &mut stream,
+        &Request::Spawn {
+            session: "s1".into(),
+        },
+    );
+    send(&mut stream, &Request::Status);
+    assert!(matches!(read_reply(&mut reader), Reply::Status { .. }));
+
+    let listed = Command::new(env!("CARGO_BIN_EXE_muis-ctl"))
+        .arg("--socket")
+        .arg(&daemon.socket)
+        .arg("ls")
+        .output()
+        .expect("run muis-ctl");
+    assert!(listed.status.success());
+    assert_eq!(String::from_utf8_lossy(&listed.stdout).trim(), "s1");
+}
+
+#[test]
+fn ctl_reports_a_missing_daemon() {
+    let dir = std::env::temp_dir().join(format!("muis-ctl-none-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_muis-ctl"))
+        .arg("--socket")
+        .arg(dir.join("absent.sock"))
+        .arg("ls")
+        .output()
+        .expect("run muis-ctl");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("muis-ctl:"));
+}
