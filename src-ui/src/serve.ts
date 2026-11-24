@@ -150,12 +150,18 @@ export class WsTransport implements Transport {
 }
 
 /** Desktop toast through the browser's Notification API. */
-export function notifyDesktop(title: string, body: string): void {
+export function notifyDesktop(title: string, body: string, onClick?: () => void): void {
   if (typeof Notification === "undefined") return;
   try {
     const fire = () => {
       try {
-        new Notification(title || "muis", { body });
+        const notification = new Notification(title || "muis", { body });
+        if (onClick) {
+          notification.onclick = () => {
+            window.focus();
+            onClick();
+          };
+        }
       } catch {
         /* notification API refused; the tab badge still shows it */
       }

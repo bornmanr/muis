@@ -119,13 +119,44 @@ if (IN_TAURI) {
   });
 }
 
-/** Best-effort OS toast; no-op outside Tauri or without permission. */
-async function sendDesktopNotification(title: string, body: string): Promise<void> {
+/** Focus a tab by id, from a notification click. */
+function focusTabById(tabId: string): void {
+  for (let wi = 0; wi < store.workspaces.length; wi++) {
+    const ws = store.workspaces[wi];
+    const ti = ws.tabs.findIndex((t) => t.id === tabId);
+    if (ti < 0) continue;
+    store.current = wi;
+    ws.active = ti;
+    renderAll();
+    focusActiveTerminalOnSelect();
+    return;
+  }
+}
+
+/**
+ * Best-effort OS toast; no-op outside Tauri or without permission. With a
+ * `tabId`, clicking the toast focuses that tab: the browser host uses the
+ * Notification API's onclick, the native window asks the shell to show it so
+ * the D-Bus action comes back as an event.
+ */
+async function sendDesktopNotification(
+  title: string,
+  body: string,
+  tabId?: string,
+): Promise<void> {
   if (IS_SERVE) {
-    notifyDesktop(title, body);
+    notifyDesktop(title, body, tabId ? () => focusTabById(tabId) : undefined);
     return;
   }
   if (!IN_TAURI) return;
+  if (tabId) {
+    try {
+      await invoke("notify_clickable", { title, body, tabId });
+      return;
+    } catch {
+      /* older shell or no notification daemon: fall back below */
+    }
+  }
   try {
     const { isPermissionGranted, requestPermission, sendNotification } = await import(
       "@tauri-apps/plugin-notification"
@@ -277,6 +308,9 @@ subscribe<CliAgentSession>("muis-agent-session", handleAgentSession);
 subscribe<CliAgentActivity>("muis-agent-activity", handleAgentActivity);
 subscribe<CliAgentState>("muis-agent-state", handleAgentState);
 subscribe<CliOpenUrl>("muis-open-url", handleOpenUrl);
+subscribe<{ tab_id?: string }>("muis-focus-tab", (e) => {
+  if (e?.tab_id) focusTabById(e.tab_id);
+});
 
 /** View options; loaded from disk in init, edited in the settings dialog. */
 let cfg: AppConfig = defaultConfig();
@@ -2935,7 +2969,7 @@ function applyNotification(tab: Tab, ev: NotifyEvent): boolean {
     toast: decision.toast,
   });
   if (decision.toast) {
-    void sendDesktopNotification(ev.title ?? tab.title ?? "muis", ev.body);
+    void sendDesktopNotification(ev.title ?? tab.title ?? "muis", ev.body, tab.id);
   }
   if (!decision.attention) return false;
   doneTabs.mark(tab.id, decision.attention);
