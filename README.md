@@ -266,13 +266,15 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
 - Progress: `OSC 9;4;<state>;<percent>` (Windows Terminal / WezTerm / kitty)
   draws a thin bar on the tab: 0 clears, 1 normal, 2 error, 3 indeterminate.
 - Browser pane: Ctrl+Shift+B (or the split-window button next to the
-  gear) docks an HTML preview to the right of the terminal,
-  Ctrl+Shift+U jumps to its address bar, and the × closes it (Escape with
-  the pane focused also closes it). Drag the left edge to resize. Agents open it with `muis-agent open http://localhost:5173`;
-  opencode exposes the same call as the `muis_open_url` tool, so a coding
-  turn can show its own dev server or generated page without leaving muis.
-  Pages that refuse framing get the ↗ button, which hands the URL to the
-  system browser.
+  gear) docks an HTML preview to the right of the terminal, and
+  Ctrl+Shift+U jumps to its address bar; × closes it. Drag the left edge
+  to resize, double-click it to reset. Escape in the address bar reverts
+  to the loaded page and puts the keyboard back in the terminal. Agents
+  open the pane with `muis-agent open http://localhost:5173`; opencode
+  exposes the same call as the `muis_open_url` tool, so a coding turn can
+  show its own dev server or generated page without leaving muis. Pages
+  that refuse framing get the ↗ button, which hands the URL to the system
+  browser.
 
 ## Tests
 
