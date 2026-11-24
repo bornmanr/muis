@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/muis-core",
+  "crates/muis-daemon",
   "crates/muis-worker",
   "crates/muis-shell",
   "crates/muis-notify",

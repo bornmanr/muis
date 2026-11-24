@@ -13,7 +13,7 @@ mod bridge;
 mod logging;
 mod persist;
 
-use bridge::{EventSink, WorkerLaunch, WorkerPool, WORKER_EVENT};
+use bridge::{env_for_shell, EventSink, WorkerLaunch, WorkerPool, WORKER_EVENT};
 use muis_core::notify::ClientRequest;
 use tauri::{Emitter, Manager};
 
@@ -590,7 +590,8 @@ fn main() {
 
             let handle = app.handle().clone();
             let sink: EventSink = Arc::new(move |event| handle.emit(WORKER_EVENT, &event).is_ok());
-            app.handle().manage(WorkerPool::new(sink, launch));
+            app.handle()
+                .manage(WorkerPool::new(sink, launch, env_for_shell()));
 
             // Notification endpoint for `muis-notify` clients. One per-user
             // socket; each request is forwarded to the frontend, which routes
