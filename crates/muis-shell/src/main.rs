@@ -174,6 +174,46 @@ fn test_mode() -> bool {
 /// Notification socket this shell serves and injects into every pty. Test
 /// mode uses a distinct socket so it never collides with a running muis (and
 /// its terminals' `muis-notify` reaches the test window, not the real one).
+/// Show a desktop toast whose click focuses `tab_id`.
+///
+/// The Tauri notification plugin does not surface D-Bus actions, so Linux
+/// talks to `org.freedesktop.Notifications` through `notify-rust` directly.
+/// `wait_for_action` blocks until the toast is clicked or closed, hence the
+/// thread; a closed toast never emits.
+#[tauri::command]
+fn notify_clickable(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+    tab_id: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        std::thread::spawn(move || {
+            let mut notification = notify_rust::Notification::new();
+            notification
+                .summary(&title)
+                .body(&body)
+                .appname("muis")
+                .action("default", "Show tab");
+            match notification.show() {
+                Ok(handle) => handle.wait_for_action(|action| {
+                    if action != "__closed" {
+                        let _ = app.emit("muis-focus-tab", serde_json::json!({ "tab_id": tab_id }));
+                    }
+                }),
+                Err(e) => log::warn!("desktop notification failed: {e}"),
+            }
+        });
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, title, body, tab_id);
+        Err("click-to-focus needs the Linux notifications interface".to_string())
+    }
+}
+
 /// `MUIS_SOCKET_NAME` overrides the base name (the live smoke test sets it so
 /// it does not fight a real muis for the per-user socket).
 pub(crate) fn notify_socket_name() -> String {
@@ -521,6 +561,7 @@ fn main() {
             opencode_sessions,
             list_subdirs,
             open_url,
+            notify_clickable,
             worker_spawn,
             worker_send,
             worker_stop

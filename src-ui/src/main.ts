@@ -119,13 +119,44 @@ if (IN_TAURI) {
   });
 }
 
-/** Best-effort OS toast; no-op outside Tauri or without permission. */
-async function sendDesktopNotification(title: string, body: string): Promise<void> {
+/** Focus a tab by id, from a notification click. */
+function focusTabById(tabId: string): void {
+  for (let wi = 0; wi < store.workspaces.length; wi++) {
+    const ws = store.workspaces[wi];
+    const ti = ws.tabs.findIndex((t) => t.id === tabId);
+    if (ti < 0) continue;
+    store.current = wi;
+    ws.active = ti;
+    renderAll();
+    focusActiveTerminalOnSelect();
+    return;
+  }
+}
+
+/**
+ * Best-effort OS toast; no-op outside Tauri or without permission. With a
+ * `tabId`, clicking the toast focuses that tab: the browser host uses the
+ * Notification API's onclick, the native window asks the shell to show it so
+ * the D-Bus action comes back as an event.
+ */
+async function sendDesktopNotification(
+  title: string,
+  body: string,
+  tabId?: string,
+): Promise<void> {
   if (IS_SERVE) {
-    notifyDesktop(title, body);
+    notifyDesktop(title, body, tabId ? () => focusTabById(tabId) : undefined);
     return;
   }
   if (!IN_TAURI) return;
+  if (tabId) {
+    try {
+      await invoke("notify_clickable", { title, body, tabId });
+      return;
+    } catch {
+      /* older shell or no notification daemon: fall back below */
+    }
+  }
   try {
     const { isPermissionGranted, requestPermission, sendNotification } = await import(
       "@tauri-apps/plugin-notification"
@@ -277,6 +308,9 @@ subscribe<CliAgentSession>("muis-agent-session", handleAgentSession);
 subscribe<CliAgentActivity>("muis-agent-activity", handleAgentActivity);
 subscribe<CliAgentState>("muis-agent-state", handleAgentState);
 subscribe<CliOpenUrl>("muis-open-url", handleOpenUrl);
+subscribe<{ tab_id?: string }>("muis-focus-tab", (e) => {
+  if (e?.tab_id) focusTabById(e.tab_id);
+});
 
 /** View options; loaded from disk in init, edited in the settings dialog. */
 let cfg: AppConfig = defaultConfig();
@@ -1590,6 +1624,19 @@ function renameTab(ws: Workspace, tab: Tab): void {
   }
 }
 
+/** Prompt for a #rrggbb accent; empty clears it back to the name hash. */
+function editTabColor(ws: Workspace, tab: Tab): void {
+  const answer = window.prompt("Tab color (#rrggbb, empty clears)", tab.color ?? "");
+  if (answer === null) return;
+  const value = answer.trim();
+  const wsIndex = store.workspaces.indexOf(ws);
+  if (value !== "" && !/^#[0-9a-fA-F]{6}$/.test(value)) {
+    window.alert("Use a #rrggbb color, for example #da4453.");
+    return;
+  }
+  if (store.setTabColor(wsIndex, tab.id, value === "" ? null : value)) renderAll();
+}
+
 function toggleFreezeTitle(ws: Workspace, tab: Tab): void {
   tab.manual = !tab.manual;
   if (!tab.manual) {
@@ -1611,11 +1658,17 @@ function tabElement(ws: Workspace, tab: Tab, selected: boolean): HTMLElement {
   const d = el("div", "tab" + (selected ? " active" : "") + (done ? " done" : ""));
   d.dataset.i = String(ws.tabs.findIndex((t) => t.id === tab.id));
   const label = tabLabel(tab);
-  const tcol = colorFor(label);
+  // A user-chosen accent wins over the name hash, so a pinned review tab can
+  // stay recognisable regardless of what the shell renames it to.
+  const tcol = tab.color ?? colorFor(label);
   const dot = el("span", "t-dot");
   dot.style.background = tcol;
   const title = el("span", "t-name", label);
   d.append(dot, title);
+  if (tab.pinned) {
+    d.classList.add("pinned");
+    d.append(el("span", "t-pin", "📌"));
+  }
   // A pending completion reads "waiting" — it wants the user. It blinks
   // until the tab is looked at, then stays lit (green, no animation) until
   // the agent resumes or the tab closes. Only a dead pty reads "done".
@@ -1663,7 +1716,9 @@ function tabElement(ws: Workspace, tab: Tab, selected: boolean): HTMLElement {
   // button-specific, so this leaves the select handler and the reorder
   // drag (both primary-button) untouched.
   d.addEventListener("auxclick", (e) => {
-    if (e.button !== 1) return;
+    // A pinned tab is protected from the accidental middle-click close; the
+    // ✕ button still works, so nothing is truly unclosable.
+    if (e.button !== 1 || tab.pinned) return;
     e.preventDefault();
     e.stopPropagation();
     closeTab(ws.id, tab.id);
@@ -2394,6 +2449,17 @@ function openPalette(): void {
     if (active) {
       add("clear-scrollback", "Clear scrollback", () => clearScrollback(active.id));
       add("focus-terminal", "Focus terminal", () => views.get(active.id)?.term.focus());
+      add(active.pinned ? "unpin-tab" : "pin-tab", active.pinned ? "Unpin tab" : "Pin tab", () => {
+        const wsIndex = store.workspaces.indexOf(ws);
+        if (store.setPinned(wsIndex, active.id, !active.pinned)) renderAll();
+      });
+      add("tab-color", "Tab color…", () => editTabColor(ws, active));
+      if (active.color) {
+        add("tab-color-clear", "Clear tab color", () => {
+          const wsIndex = store.workspaces.indexOf(ws);
+          if (store.setTabColor(wsIndex, active.id, null)) renderAll();
+        });
+      }
     }
     add("close-session", "Close session", () => closeSession(ws));
   }
@@ -2903,7 +2969,7 @@ function applyNotification(tab: Tab, ev: NotifyEvent): boolean {
     toast: decision.toast,
   });
   if (decision.toast) {
-    void sendDesktopNotification(ev.title ?? tab.title ?? "muis", ev.body);
+    void sendDesktopNotification(ev.title ?? tab.title ?? "muis", ev.body, tab.id);
   }
   if (!decision.attention) return false;
   doneTabs.mark(tab.id, decision.attention);
