@@ -117,7 +117,9 @@ impl DaemonClient {
                     Ok(Reply::Status { .. }) => {}
                     // Forwarded UI requests land here once the window
                     // registers as a UI client; until then they are ignored.
-                    Ok(Reply::UiRequest { .. }) | Ok(Reply::UiReply { .. }) => {}
+                    Ok(Reply::UiRequest { .. })
+                    | Ok(Reply::UiReply { .. })
+                    | Ok(Reply::Hello { .. }) => {}
                     Err(e) => log::debug!("muis-daemon: undecodable reply: {e}"),
                 }
             }

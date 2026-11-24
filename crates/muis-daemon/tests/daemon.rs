@@ -243,6 +243,10 @@ fn ui_requests_are_forwarded_and_replies_routed() {
     let daemon = start_daemon();
     let (mut ui_reader, mut ui_stream) = connect(&daemon.socket);
     send(&mut ui_stream, &Request::Hello { role: Role::Ui });
+    assert!(matches!(
+        read_reply(&mut ui_reader),
+        Reply::Hello { role: Role::Ui }
+    ));
 
     let (mut caller_reader, mut caller) = connect(&daemon.socket);
     send(

@@ -55,6 +55,9 @@ pub enum Request {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Reply {
+    /// Registration acknowledged, so a client never has to guess whether its
+    /// `hello` landed before the first request.
+    Hello { role: Role },
     /// One worker frame, exactly as the frontend used to receive it.
     Event {
         session_id: String,

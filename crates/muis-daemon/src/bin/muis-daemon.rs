@@ -196,7 +196,9 @@ mod imp {
                             Some((conn_id, stream.try_clone().expect("clone ui")));
                         eprintln!("muis-daemon: window attached");
                     }
-                    None
+                    // Acknowledge so the client knows it is registered before
+                    // it relies on that (and tests never race the accept).
+                    Some(Reply::Hello { role })
                 }
                 Ok(Request::Ui { id, op, args }) => {
                     let ui = shared
