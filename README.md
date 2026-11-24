@@ -235,6 +235,10 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
 - Zoom: Ctrl+= / Ctrl+- change the terminal font size live, Ctrl+0 resets;
   Ctrl+Shift+= / Ctrl+Shift+- scale the whole window for reading from a
   distance.
+- View a local file: the command palette's "View file…" renders an image,
+  PDF, text, diff or markdown in the docked pane. It is served from a
+  loopback-only viewer with a token and an allow-list of the files you asked
+  for, and never executes the file it shows.
 - Links: Ctrl+click a URL in the output to open it in the preview pane,
   Ctrl+Shift+click to copy. File paths are copied resolved against the
   tab's cwd; nothing in terminal output is ever executed.

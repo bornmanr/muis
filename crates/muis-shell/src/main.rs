@@ -54,6 +54,22 @@ fn worker_launch() -> Option<WorkerLaunch> {
     worker_path().map(WorkerLaunch)
 }
 
+/// Serve a local file to the browser pane. The viewer keeps an allow-list of
+/// paths the UI asked for, so the returned loopback URL reads exactly one
+/// file and nothing else.
+#[tauri::command]
+fn view_file(path: String) -> Result<String, String> {
+    use std::sync::OnceLock;
+    static VIEWER: OnceLock<Result<muis_core::view::ViewServer, String>> = OnceLock::new();
+    let server = VIEWER.get_or_init(|| {
+        muis_core::view::ViewServer::start().map_err(|e| format!("viewer unavailable: {e}"))
+    });
+    server
+        .as_ref()
+        .map_err(|e| e.clone())?
+        .url_for(std::path::Path::new(&path))
+}
+
 #[tauri::command]
 fn ping() -> String {
     "pong".to_string()
@@ -563,6 +579,7 @@ fn main() {
             opencode_sessions,
             list_subdirs,
             open_url,
+            view_file,
             notify_clickable,
             worker_spawn,
             worker_send,

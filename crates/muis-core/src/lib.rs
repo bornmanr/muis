@@ -8,3 +8,4 @@ pub mod ipc;
 pub mod notify;
 pub mod paths;
 pub mod shell;
+pub mod view;

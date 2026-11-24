@@ -15,23 +15,40 @@ pub enum UiToWorker {
         rows: u16,
     },
     /// Terminal input bytes, base64 (stdin pastes are not always UTF-8).
-    Write { pty_id: String, data_b64: String },
-    Resize { pty_id: String, cols: u16, rows: u16 },
-    Kill { pty_id: String },
+    Write {
+        pty_id: String,
+        data_b64: String,
+    },
+    Resize {
+        pty_id: String,
+        cols: u16,
+        rows: u16,
+    },
+    Kill {
+        pty_id: String,
+    },
 }
 
 /// Worker → UI frames, one JSON object per line on worker stdout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkerToUi {
-    Spawned { pty_id: String },
+    Spawned {
+        pty_id: String,
+    },
     /// Pty output bytes, base64.
-    Output { pty_id: String, data_b64: String },
+    Output {
+        pty_id: String,
+        data_b64: String,
+    },
     Exited {
         pty_id: String,
         code: Option<i32>,
     },
-    Error { pty_id: String, message: String },
+    Error {
+        pty_id: String,
+        message: String,
+    },
 }
 
 pub fn encode_line<T: Serialize>(msg: &T) -> serde_json::Result<String> {
@@ -81,7 +98,9 @@ mod tests {
                 cols: 120,
                 rows: 32,
             },
-            UiToWorker::Kill { pty_id: "p1".into() },
+            UiToWorker::Kill {
+                pty_id: "p1".into(),
+            },
         ];
         for m in ui {
             let line = encode_line(&m).unwrap();
@@ -89,7 +108,9 @@ mod tests {
             assert_eq!(decode_ui(&line).unwrap(), m);
         }
         let worker = vec![
-            WorkerToUi::Spawned { pty_id: "p1".into() },
+            WorkerToUi::Spawned {
+                pty_id: "p1".into(),
+            },
             WorkerToUi::Output {
                 pty_id: "p1".into(),
                 data_b64: b64_encode(b"hi"),

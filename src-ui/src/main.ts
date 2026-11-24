@@ -2512,6 +2512,9 @@ function openPalette(): void {
   }
   add("settings", "Open settings", () => openSettings());
   add("inbox", "Needs you…", () => openInbox());
+  // The loopback viewer is a window feature for now; the browser host has no
+  // file route yet, so the action would only fail there.
+  if (!IS_SERVE) add("view-file", "View file…", () => promptViewFile());
   add("zoom-in", "Zoom in", () => zoomTerminal(1));
   add("zoom-out", "Zoom out", () => zoomTerminal(-1));
   add("zoom-reset", "Reset zoom", () => resetZoom());
@@ -2784,6 +2787,24 @@ function scaleWindow(delta: number): void {
   uiScale = next;
   document.documentElement.style.setProperty("zoom", String(uiScale));
   for (const [, view] of views) view.fit.fit();
+}
+
+/**
+ * Render a local file in the docked pane. The path is resolved against the
+ * active tab's cwd, so `README.md` means what it means in that shell.
+ */
+async function promptViewFile(): Promise<void> {
+  const answer = window.prompt("File to view (path, or ~/...)");
+  if (!answer) return;
+  const tab = store.currentWorkspace()?.tabs[store.currentWorkspace()?.active ?? 0];
+  let path = expandHome(answer.trim(), homeDir);
+  if (!path.startsWith("/") && tab?.cwd) path = `${tab.cwd.replace(/\/+$/, "")}/${path}`;
+  try {
+    const url = await shellCall<string>("view_file", { path });
+    openPreview(url);
+  } catch (e) {
+    window.alert(`Cannot view ${path}: ${String(e)}`);
+  }
 }
 
 /* ---------------- links ---------------- */
