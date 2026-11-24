@@ -65,6 +65,7 @@ jobs:
           cp target/release/muis target/release/muis-worker target/release/muis-notify target/release/muis-agent "${staging}/"
           cp data/muis.desktop "${staging}/"
           cp data/icons/hicolor/512x512/apps/muis.png "${staging}/icons/muis.png"
+          cp -r data/fastfetch "${staging}/fastfetch"
           tar -czf "${staging}.tar.gz" "${staging}"
           sha256sum "${staging}.tar.gz" > "${staging}.tar.gz.sha256"
       - uses: actions/upload-artifact@v6
