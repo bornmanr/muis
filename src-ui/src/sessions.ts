@@ -15,6 +15,10 @@ export interface Tab {
   agentSessionDir?: string;
   /** Last session title opencode put in the terminal title ("OC | ..."). */
   agentTitle?: string;
+  /** Pinned tabs sort to the front of the strip and ignore middle-click close. */
+  pinned?: boolean;
+  /** Per-tab accent (#rrggbb) for the tab dot, overriding the name hash. */
+  color?: string;
 }
 
 /** Bump only for an incompatible layout; older files still load. */
@@ -156,6 +160,49 @@ export class SessionStore {  workspaces: Workspace[] = [];
     return id;
   }
 
+  /**
+   * Pin or unpin a tab. A pinned tab moves to the front, after any tab that
+   * is already pinned, so pin order stays stable; unpinning leaves the tab
+   * where it is instead of trying to restore an old position.
+   */
+  setPinned(wsIndex: number, tabId: string, pinned: boolean): boolean {
+    const ws = this.workspaces[wsIndex];
+    if (!ws) return false;
+    const index = ws.tabs.findIndex((t) => t.id === tabId);
+    if (index < 0) return false;
+    const tab = ws.tabs[index];
+    if (!!tab.pinned === pinned) return false;
+    tab.pinned = pinned;
+    const activeId = ws.tabs[ws.active]?.id;
+    const [moved] = ws.tabs.splice(index, 1);
+    if (pinned) {
+      let lastPinned = -1;
+      ws.tabs.forEach((t, i) => {
+        if (t.pinned) lastPinned = i;
+      });
+      ws.tabs.splice(lastPinned + 1, 0, moved);
+    } else {
+      ws.tabs.splice(index, 0, moved);
+    }
+    const nextActive = ws.tabs.findIndex((t) => t.id === activeId);
+    ws.active = nextActive >= 0 ? nextActive : 0;
+    return true;
+  }
+
+  /** Set or clear a tab's accent. Anything but #rrggbb is refused. */
+  setTabColor(wsIndex: number, tabId: string, color: string | null): boolean {
+    const ws = this.workspaces[wsIndex];
+    if (!ws) return false;
+    const tab = ws.tabs.find((t) => t.id === tabId);
+    if (!tab) return false;
+    if (color !== null && !/^#[0-9a-fA-F]{6}$/.test(color)) return false;
+    const next = color ?? undefined;
+    if (tab.color === next) return false;
+    if (next === undefined) delete tab.color;
+    else tab.color = next;
+    return true;
+  }
+
   closeTab(wsIndex: number, tabIndex: number): boolean {
     const ws = this.workspaces[wsIndex];
     if (!ws || tabIndex >= ws.tabs.length) return false;
@@ -263,5 +310,7 @@ function sanitizeTab(value: unknown): Tab | null {
     tab.agentSessionDir = raw.agentSessionDir;
   }
   if (typeof raw.agentTitle === "string" && raw.agentTitle) tab.agentTitle = raw.agentTitle;
+  if (raw.pinned === true) tab.pinned = true;
+  if (typeof raw.color === "string" && /^#[0-9a-fA-F]{6}$/.test(raw.color)) tab.color = raw.color;
   return tab;
 }

@@ -277,4 +277,56 @@ describe("SessionStore persistence", () => {
     expect(id).not.toBe("t1");
     expect(id).not.toBe("t2");
   });
+
+  it("pins a tab to the front without losing the active tab", () => {
+    const s = store();
+    const first = s.workspaces[0].tabs[0].id;
+    const second = s.newTab("T2", "/tmp")!;
+    const third = s.newTab("T3", "/tmp")!;
+    // Active is the third tab; pinning the first must keep it active.
+    expect(s.workspaces[0].active).toBe(2);
+    expect(s.setPinned(0, first, true)).toBe(true);
+    expect(s.workspaces[0].tabs.map((t) => t.id)).toEqual([first, second, third]);
+    expect(s.workspaces[0].tabs[0].pinned).toBe(true);
+    expect(s.activeTab()?.id).toBe(third);
+
+    // A second pin lands after the first, not before it.
+    expect(s.setPinned(0, third, true)).toBe(true);
+    expect(s.workspaces[0].tabs.map((t) => t.id)).toEqual([first, third, second]);
+    expect(s.activeTab()?.id).toBe(third);
+
+    // Unpinning leaves the tab where it is.
+    expect(s.setPinned(0, first, false)).toBe(true);
+    expect(s.workspaces[0].tabs.map((t) => t.id)).toEqual([first, third, second]);
+    // No-op when already in the requested state.
+    expect(s.setPinned(0, first, false)).toBe(false);
+    expect(s.setPinned(0, "nope", true)).toBe(false);
+  });
+
+  it("sets and clears a validated tab colour, and persists both fields", () => {
+    const s = store();
+    const id = s.workspaces[0].tabs[0].id;
+    expect(s.setTabColor(0, id, "#da4453")).toBe(true);
+    expect(s.workspaces[0].tabs[0].color).toBe("#da4453");
+    expect(s.setTabColor(0, id, "red")).toBe(false);
+    expect(s.setTabColor(0, id, "#da4453")).toBe(false);
+
+    s.setPinned(0, id, true);
+    const back = SessionStore.fromJSON(s.toJSON());
+    expect(back.workspaces[0].tabs[0].pinned).toBe(true);
+    expect(back.workspaces[0].tabs[0].color).toBe("#da4453");
+
+    expect(back.setTabColor(0, id, null)).toBe(true);
+    expect(back.workspaces[0].tabs[0].color).toBeUndefined();
+  });
+
+  it("drops an invalid colour from a restored file", () => {
+    const s = store();
+    const json = JSON.parse(s.toJSON());
+    json.workspaces[0].tabs[0].color = "javascript:alert(1)";
+    json.workspaces[0].tabs[0].pinned = "yes";
+    const back = SessionStore.fromJSON(JSON.stringify(json));
+    expect(back.workspaces[0].tabs[0].color).toBeUndefined();
+    expect(back.workspaces[0].tabs[0].pinned).toBeUndefined();
+  });
 });

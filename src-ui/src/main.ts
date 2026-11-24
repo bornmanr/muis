@@ -1590,6 +1590,19 @@ function renameTab(ws: Workspace, tab: Tab): void {
   }
 }
 
+/** Prompt for a #rrggbb accent; empty clears it back to the name hash. */
+function editTabColor(ws: Workspace, tab: Tab): void {
+  const answer = window.prompt("Tab color (#rrggbb, empty clears)", tab.color ?? "");
+  if (answer === null) return;
+  const value = answer.trim();
+  const wsIndex = store.workspaces.indexOf(ws);
+  if (value !== "" && !/^#[0-9a-fA-F]{6}$/.test(value)) {
+    window.alert("Use a #rrggbb color, for example #da4453.");
+    return;
+  }
+  if (store.setTabColor(wsIndex, tab.id, value === "" ? null : value)) renderAll();
+}
+
 function toggleFreezeTitle(ws: Workspace, tab: Tab): void {
   tab.manual = !tab.manual;
   if (!tab.manual) {
@@ -1611,11 +1624,17 @@ function tabElement(ws: Workspace, tab: Tab, selected: boolean): HTMLElement {
   const d = el("div", "tab" + (selected ? " active" : "") + (done ? " done" : ""));
   d.dataset.i = String(ws.tabs.findIndex((t) => t.id === tab.id));
   const label = tabLabel(tab);
-  const tcol = colorFor(label);
+  // A user-chosen accent wins over the name hash, so a pinned review tab can
+  // stay recognisable regardless of what the shell renames it to.
+  const tcol = tab.color ?? colorFor(label);
   const dot = el("span", "t-dot");
   dot.style.background = tcol;
   const title = el("span", "t-name", label);
   d.append(dot, title);
+  if (tab.pinned) {
+    d.classList.add("pinned");
+    d.append(el("span", "t-pin", "📌"));
+  }
   // A pending completion reads "waiting" — it wants the user. It blinks
   // until the tab is looked at, then stays lit (green, no animation) until
   // the agent resumes or the tab closes. Only a dead pty reads "done".
@@ -1663,7 +1682,9 @@ function tabElement(ws: Workspace, tab: Tab, selected: boolean): HTMLElement {
   // button-specific, so this leaves the select handler and the reorder
   // drag (both primary-button) untouched.
   d.addEventListener("auxclick", (e) => {
-    if (e.button !== 1) return;
+    // A pinned tab is protected from the accidental middle-click close; the
+    // ✕ button still works, so nothing is truly unclosable.
+    if (e.button !== 1 || tab.pinned) return;
     e.preventDefault();
     e.stopPropagation();
     closeTab(ws.id, tab.id);
@@ -2394,6 +2415,17 @@ function openPalette(): void {
     if (active) {
       add("clear-scrollback", "Clear scrollback", () => clearScrollback(active.id));
       add("focus-terminal", "Focus terminal", () => views.get(active.id)?.term.focus());
+      add(active.pinned ? "unpin-tab" : "pin-tab", active.pinned ? "Unpin tab" : "Pin tab", () => {
+        const wsIndex = store.workspaces.indexOf(ws);
+        if (store.setPinned(wsIndex, active.id, !active.pinned)) renderAll();
+      });
+      add("tab-color", "Tab color…", () => editTabColor(ws, active));
+      if (active.color) {
+        add("tab-color-clear", "Clear tab color", () => {
+          const wsIndex = store.workspaces.indexOf(ws);
+          if (store.setTabColor(wsIndex, active.id, null)) renderAll();
+        });
+      }
     }
     add("close-session", "Close session", () => closeSession(ws));
   }
