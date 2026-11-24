@@ -16,6 +16,13 @@ export type ShortcutAction =
   | { type: "cycle-session"; delta: number }
   | { type: "toggle-preview" }
   | { type: "focus-preview" }
+  | { type: "inbox" }
+  | { type: "next-waiting" }
+  | { type: "zoom-in" }
+  | { type: "zoom-out" }
+  | { type: "zoom-reset" }
+  | { type: "scale-up" }
+  | { type: "scale-down" }
   | { type: "close-overlay" };
 
 export interface KeyLike {
@@ -37,6 +44,13 @@ const SIMPLE_ACTIONS = new Set([
   "command-palette",
   "toggle-preview",
   "focus-preview",
+  "inbox",
+  "next-waiting",
+  "zoom-in",
+  "zoom-out",
+  "zoom-reset",
+  "scale-up",
+  "scale-down",
   "close-overlay",
 ]);
 
@@ -83,6 +97,21 @@ export function resolveShortcut(e: KeyLike, overrides?: Record<string, string>):
   // Browser pane: ctrl+shift+b toggles it, ctrl+shift+u jumps to its address.
   if (ctrlShift && lower === "b") return { type: "toggle-preview" };
   if (ctrlShift && lower === "u") return { type: "focus-preview" };
+  // Agents: ctrl+shift+i opens the needs-you queue, ctrl+shift+o jumps to the
+  // next waiting tab without opening it.
+  if (ctrlShift && lower === "i") return { type: "inbox" };
+  if (ctrlShift && lower === "o") return { type: "next-waiting" };
+  // Zoom: the terminal font first (ctrl+=/-/0), then the whole window
+  // (ctrl+shift+=/-) for reading a TUI from across the room.
+  if (e.ctrlKey && !e.altKey && (key === "=" || key === "+" || e.code === "Equal" || e.code === "NumpadAdd")) {
+    return { type: e.shiftKey ? "scale-up" : "zoom-in" };
+  }
+  if (e.ctrlKey && !e.altKey && (key === "-" || key === "_" || e.code === "Minus" || e.code === "NumpadSubtract")) {
+    return { type: e.shiftKey ? "scale-down" : "zoom-out" };
+  }
+  if (e.ctrlKey && !e.altKey && !e.shiftKey && (key === "0" || e.code === "Digit0" || e.code === "Numpad0")) {
+    return { type: "zoom-reset" };
+  }
 
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
     const m = /^(?:Digit)?([1-9])$/.exec(e.code ?? "");

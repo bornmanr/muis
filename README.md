@@ -225,6 +225,18 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
 
 - Ctrl+T new tab, × button closes (confirms when a process is busy),
   Ctrl+Shift+F12 focuses the terminal, Ctrl+Shift+F search, Ctrl+, settings.
+- Agent attention: Ctrl+Shift+I opens the needs-you queue (`blocked` tabs
+  first, then finished ones, oldest first); Ctrl+Shift+O jumps to the next
+  waiting tab without opening it. A blocked tab is ringed red and reads
+  "needs you" instead of "waiting", and its session dot turns red.
+- Zoom: Ctrl+= / Ctrl+- change the terminal font size live, Ctrl+0 resets;
+  Ctrl+Shift+= / Ctrl+Shift+- scale the whole window for reading from a
+  distance.
+- Links: Ctrl+click a URL in the output to open it in the preview pane,
+  Ctrl+Shift+click to copy. File paths are copied resolved against the
+  tab's cwd; nothing in terminal output is ever executed.
+- Paste: multi-line pastes into a program without bracketed paste ask
+  first, and pasting into a tab waiting for an approval always confirms.
 - Sessions and tabs are restored on the next launch from
   `$XDG_STATE_HOME/muis/sessions.json` (default `~/.local/share/muis`).
   Settings persist in `~/.config/muis/muis.json`. Tabs that were running

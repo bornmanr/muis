@@ -94,4 +94,31 @@ describe("resolveShortcut", () => {
     expect(resolveShortcut(key({ key: "Escape" }))).toEqual({ type: "close-overlay" });
     expect(resolveShortcut(key({ key: "a" }))).toBeNull();
   });
+
+  it("opens the needs-you queue and cycles waiting tabs", () => {
+    expect(resolveShortcut(key({ key: "i", ctrlKey: true, shiftKey: true }))).toEqual({
+      type: "inbox",
+    });
+    expect(resolveShortcut(key({ key: "o", ctrlKey: true, shiftKey: true }))).toEqual({
+      type: "next-waiting",
+    });
+  });
+
+  it("zooms the terminal font and the whole window separately", () => {
+    expect(resolveShortcut(key({ key: "=", ctrlKey: true, code: "Equal" }))).toEqual({
+      type: "zoom-in",
+    });
+    expect(resolveShortcut(key({ key: "+", ctrlKey: true, shiftKey: true }))).toEqual({
+      type: "scale-up",
+    });
+    expect(resolveShortcut(key({ key: "-", ctrlKey: true, code: "Minus" }))).toEqual({
+      type: "zoom-out",
+    });
+    expect(resolveShortcut(key({ key: "_", ctrlKey: true, shiftKey: true }))).toEqual({
+      type: "scale-down",
+    });
+    expect(resolveShortcut(key({ key: "0", ctrlKey: true, code: "Digit0" }))).toEqual({
+      type: "zoom-reset",
+    });
+  });
 });
