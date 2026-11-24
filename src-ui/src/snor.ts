@@ -12,6 +12,8 @@ export interface SnorTurn {
   text: string;
   /** Never written to disk; re-attached explicitly on the next prompt. */
   context?: string;
+  /** Where the attached context came from, for the transcript note. */
+  source?: string;
 }
 
 export interface SnorHistory {
@@ -159,6 +161,21 @@ export function snorPrompt(text: string, context: string): string {
   return `${prompt}\n\n${context}`;
 }
 
+export type SnorSlash =
+  | { command: "git"; arg: string }
+  | { command: "docs"; arg: string }
+  | { command: "file"; arg: string };
+
+/** Recognize the read-only slash commands; anything else is a prompt. */
+export function parseSnorSlash(text: string): SnorSlash | null {
+  const m = /^\/(git|docs|file)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  if (!m) return null;
+  return {
+    command: m[1].toLowerCase() as SnorSlash["command"],
+    arg: (m[2] ?? "").trim(),
+  };
+}
+
 /** File name of the configured GGUF, for the panel header. */
 export function snorModelName(path: string | null | undefined): string {
   const value = path?.trim();
@@ -178,4 +195,17 @@ const STATE_LABELS: Record<string, string> = {
 export function snorStateLabel(state: string | undefined): string {
   if (!state) return STATE_LABELS.stopped;
   return STATE_LABELS[state] ?? state;
+}
+
+/** Compact byte size for the model catalog. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(unit >= 1 ? 2 : 0)} ${units[unit]}`;
 }

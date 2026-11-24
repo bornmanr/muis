@@ -3,8 +3,10 @@ import {
   SNOR_MAX_CONTEXT_CHARS,
   SNOR_MAX_SAVED_TURNS,
   buildSnorContext,
+  formatBytes,
   scrubSecrets,
   parseSnorHistory,
+  parseSnorSlash,
   serializeSnorHistory,
   snorModelName,
   snorPrompt,
@@ -55,6 +57,28 @@ describe("snor context", () => {
     expect(tailLines([], 5)).toEqual([]);
     expect(tailLines(["a"], -1)).toEqual([]);
     expect(tailLines(["a", "b"], 10)).toEqual(["a", "b"]);
+  });
+});
+
+describe("snor slash commands", () => {
+  it("recognizes the read-only commands and their optional argument", () => {
+    expect(parseSnorSlash("/git")).toEqual({ command: "git", arg: "" });
+    expect(parseSnorSlash("  /GIT  ")).toEqual({ command: "git", arg: "" });
+    expect(parseSnorSlash("/git summarize the diff")).toEqual({
+      command: "git",
+      arg: "summarize the diff",
+    });
+    expect(parseSnorSlash("/docs")).toEqual({ command: "docs", arg: "" });
+    expect(parseSnorSlash("/file docs/plan.md")).toEqual({
+      command: "file",
+      arg: "docs/plan.md",
+    });
+  });
+
+  it("leaves prompts and unknown commands alone", () => {
+    expect(parseSnorSlash("what changed?")).toBeNull();
+    expect(parseSnorSlash("/rm -rf /")).toBeNull();
+    expect(parseSnorSlash("")).toBeNull();
   });
 });
 
@@ -147,5 +171,13 @@ describe("snor labels", () => {
     expect(snorStateLabel("streaming")).toBe("answering…");
     expect(snorStateLabel("weird")).toBe("weird");
     expect(snorStateLabel(undefined)).toBe("stopped");
+  });
+
+  it("formats catalog sizes", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(1536)).toBe("1.50 KiB");
+    expect(formatBytes(1117320736)).toBe("1.04 GiB");
+    expect(formatBytes(5027783488)).toBe("4.68 GiB");
   });
 });
