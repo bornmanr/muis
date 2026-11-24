@@ -17,7 +17,7 @@ fn main() {
 #[cfg(unix)]
 mod imp {
     use muis_daemon::protocol::{Reply, Request};
-    use muis_daemon::{WorkerEnv, WorkerLaunch, WorkerPool};
+    use muis_daemon::{default_socket, WorkerEnv, WorkerLaunch, WorkerPool};
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::{UnixListener, UnixStream};
@@ -70,18 +70,6 @@ mod imp {
             worker,
             idle,
         })
-    }
-
-    /// `$XDG_RUNTIME_DIR/muis/daemon.sock`, falling back to a per-user temp
-    /// directory. Runtime state belongs in the runtime dir, not in config.
-    fn default_socket() -> PathBuf {
-        let base = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                let user = std::env::var("USER").unwrap_or_else(|_| "default".to_string());
-                std::env::temp_dir().join(format!("muis-{user}"))
-            });
-        base.join("muis").join("daemon.sock")
     }
 
     pub fn run() {

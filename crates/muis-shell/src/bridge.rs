@@ -4,7 +4,7 @@
 //! every pty must inherit and re-exports the types the shell registers with
 //! Tauri.
 
-pub use muis_daemon::{EventSink, WorkerEnv, WorkerLaunch, WorkerPool, WORKER_EVENT};
+pub use muis_daemon::{EventSink, WorkerEnv, WorkerLaunch, WORKER_EVENT};
 
 use std::path::PathBuf;
 
