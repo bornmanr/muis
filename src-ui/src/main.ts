@@ -23,6 +23,7 @@ import { resolveShortcut } from "./shortcuts";
 import { DoneTracker, sidebarAttention, tabAttentionLabel, type Attention } from "./done";
 import { AgentStateTracker, agentLabel, isAgentState, stateChip, type AgentState } from "./agentState";
 import { shouldPark } from "./park";
+import { sessionPayload, tailLines, trimTrailingBlank } from "./controlops";
 import { NotifyRouter, notifyEventFromCli, notifyEventFromCommand, type CliNotify } from "./notify";
 import {
   isInjectedResume,
@@ -2806,6 +2807,106 @@ async function promptViewFile(): Promise<void> {
     window.alert(`Cannot view ${path}: ${String(e)}`);
   }
 }
+
+
+/* ---------------- control surface ---------------- */
+
+/** Cap on `capture`, so a control call cannot dump a whole buffer. */
+const MAX_CAPTURE_LINES = 2000;
+
+function tabByIdOrActive(id: unknown): Tab | undefined {
+  if (typeof id === "string") {
+    for (const ws of store.workspaces) {
+      const tab = ws.tabs.find((t) => t.id === id);
+      if (tab) return tab;
+    }
+  }
+  const ws = store.currentWorkspace();
+  return ws?.tabs[ws.active];
+}
+
+/** Every buffer row, blanks included; the caller trims. */
+function bufferLines(tabId: string): string[] {
+  const view = views.get(tabId);
+  if (!view) return [];
+  const buf = view.term.buffer.active;
+  const out: string[] = [];
+  for (let i = 0; i < buf.length; i++) {
+    out.push(buf.getLine(i)?.translateToString(true) ?? "");
+  }
+  return out;
+}
+
+/**
+ * One request forwarded by the daemon on behalf of `muis-ctl` or an agent.
+ * The answer always goes back, including on failure, so a caller never hangs.
+ */
+function handleUiRequest(req: { id: number; op: string; args?: Record<string, unknown> }): void {
+  let ok = true;
+  let result: unknown;
+  try {
+    switch (req.op) {
+      case "ls":
+        result = {
+          sessions: sessionPayload(store.workspaces, store.current, (tabId) => {
+            const report = agentStates.get(tabId);
+            if (!report) return null;
+            return {
+              state: agentStates.stateOf(tabId, Date.now()),
+              agent: report.agent,
+              model: report.model,
+            };
+          }),
+        };
+        break;
+      case "capture": {
+        const tab = tabByIdOrActive(req.args?.tab);
+        if (!tab) throw new Error("no such tab");
+        const wanted = Number(req.args?.lines) || 200;
+        const lines = Math.max(1, Math.min(MAX_CAPTURE_LINES, Math.floor(wanted)));
+        result = {
+          tab: tab.id,
+          lines: tailLines(trimTrailingBlank(bufferLines(tab.id)), lines),
+        };
+        break;
+      }
+      case "focus": {
+        const tab = tabByIdOrActive(req.args?.tab);
+        if (!tab) throw new Error("no such tab");
+        const wi = store.workspaces.findIndex((w) => w.tabs.some((t) => t.id === tab.id));
+        const ws = store.workspaces[wi];
+        ws.active = ws.tabs.findIndex((t) => t.id === tab.id);
+        store.current = wi;
+        renderAll();
+        focusActiveTerminalOnSelect();
+        result = { tab: tab.id };
+        break;
+      }
+      case "new-tab": {
+        const ws = store.currentWorkspace();
+        if (!ws) throw new Error("no session");
+        const cwd =
+          typeof req.args?.cwd === "string" ? (req.args.cwd as string) : newTabCwd(ws);
+        const id = store.newTab(`Terminal ${ws.tabs.length + 1}`, cwd);
+        renderAll();
+        focusActiveTerminal();
+        result = { tab: id };
+        break;
+      }
+      default:
+        throw new Error(`unknown op: ${req.op}`);
+    }
+  } catch (e) {
+    ok = false;
+    result = e instanceof Error ? e.message : String(e);
+  }
+  void shellCall("ui_reply", { id: req.id, ok, result }).catch(() => {});
+}
+
+subscribe<{ id: number; op: string; args?: Record<string, unknown> }>(
+  "muis-ui-request",
+  handleUiRequest,
+);
 
 /* ---------------- links ---------------- */
 
