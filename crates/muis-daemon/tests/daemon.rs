@@ -2,7 +2,7 @@
 //! speak the wire protocol over a real unix socket.
 #![cfg(unix)]
 
-use muis_daemon::protocol::{Reply, Request};
+use muis_daemon::protocol::{Reply, Request, Role};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
@@ -234,4 +234,69 @@ fn ctl_reports_a_missing_daemon() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("muis-ctl:"));
+}
+
+/// The window registers once; a client's `ui` request is forwarded to it and
+/// the answer routed back to the caller with the caller's own id.
+#[test]
+fn ui_requests_are_forwarded_and_replies_routed() {
+    let daemon = start_daemon();
+    let (mut ui_reader, mut ui_stream) = connect(&daemon.socket);
+    send(&mut ui_stream, &Request::Hello { role: Role::Ui });
+    assert!(matches!(
+        read_reply(&mut ui_reader),
+        Reply::Hello { role: Role::Ui }
+    ));
+
+    let (mut caller_reader, mut caller) = connect(&daemon.socket);
+    send(
+        &mut caller,
+        &Request::Ui {
+            id: 7,
+            op: "ls".into(),
+            args: serde_json::json!({}),
+        },
+    );
+
+    let slug = match read_reply(&mut ui_reader) {
+        Reply::UiRequest { id, op, .. } => {
+            assert_eq!(op, "ls");
+            id
+        }
+        other => panic!("window should see the forwarded request, got {other:?}"),
+    };
+    send(
+        &mut ui_stream,
+        &Request::UiReply {
+            id: slug,
+            ok: true,
+            result: serde_json::json!(["t1"]),
+        },
+    );
+    match read_reply(&mut caller_reader) {
+        Reply::UiReply { id, ok, result } => {
+            assert_eq!(id, 7, "the caller's id survives the round trip");
+            assert!(ok);
+            assert_eq!(result[0], "t1");
+        }
+        other => panic!("caller should get the answer, got {other:?}"),
+    }
+}
+
+#[test]
+fn ui_request_without_a_window_answers_an_error() {
+    let daemon = start_daemon();
+    let (mut reader, mut stream) = connect(&daemon.socket);
+    send(
+        &mut stream,
+        &Request::Ui {
+            id: 1,
+            op: "ls".into(),
+            args: serde_json::Value::Null,
+        },
+    );
+    match read_reply(&mut reader) {
+        Reply::Error { message } => assert!(message.contains("no window attached"), "{message}"),
+        other => panic!("unexpected reply: {other:?}"),
+    }
 }

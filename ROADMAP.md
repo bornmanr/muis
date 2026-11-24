@@ -48,6 +48,22 @@ Legend: `[x]` settled+locked · `[~]` decided, needs test · `[ ]` open.
       unless overridden (unit-tested), and xterm uses the WebGL renderer
       with automatic fallback to canvas
 
+## Queue (agreed, in order)
+
+- [ ] D12b: daemon forwards UI verbs (`new-tab`, `focus`, `capture`, `inbox`)
+      to the attached window and correlates the reply by id.
+- [ ] D13: `muis mcp` mapping capture/wait/view/open_url onto the same verbs.
+- [ ] D10: scriptable browser pane (navigate, snapshot, click, console).
+- [ ] P2 tail: replay buffered output on attach, then scrollback to disk with
+      retention and cross-session search (needs the P2 hand test first).
+- [ ] Auto-release: a scheduled workflow at 12:00 Africa/Johannesburg
+      (10:00 UTC) that tags and releases `vX.Y.Z` when main has commits since
+      the last tag and main CI is green. The version in
+      `crates/muis-shell/tauri.conf.json` must be bumped in the same run, and
+      the release workflow only accepts a tag that matches it.
+- [ ] P4: shell-integration installer, documented config + theme packs,
+      worktree-per-tab, task launcher, memory conventions.
+
 ## To build (in suggested order)
 
 - [ ] Nothing open here.

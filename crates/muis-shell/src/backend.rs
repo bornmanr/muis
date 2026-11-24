@@ -115,6 +115,11 @@ impl DaemonClient {
                         }
                     }
                     Ok(Reply::Status { .. }) => {}
+                    // Forwarded UI requests land here once the window
+                    // registers as a UI client; until then they are ignored.
+                    Ok(Reply::UiRequest { .. })
+                    | Ok(Reply::UiReply { .. })
+                    | Ok(Reply::Hello { .. }) => {}
                     Err(e) => log::debug!("muis-daemon: undecodable reply: {e}"),
                 }
             }
@@ -130,7 +135,10 @@ impl DaemonClient {
         let session = match request {
             Request::Spawn { session } | Request::Send { session, .. } => Some(session.clone()),
             Request::Stop { session } => Some(session.clone()),
-            Request::Status => None,
+            Request::Status
+            | Request::Hello { .. }
+            | Request::Ui { .. }
+            | Request::UiReply { .. } => None,
         };
         *self.pending.lock().unwrap() = session;
         let line = serde_json::to_string(request).map_err(|e| e.to_string())?;
