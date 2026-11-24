@@ -87,21 +87,15 @@ fn run(socket: &PathBuf, command: Command) -> Result<(), String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| e.to_string())?;
-    let (request, wants_reply) = match &command {
-        Command::Ls | Command::Status => (Request::Status, true),
-        Command::Stop(session) => (
-            Request::Stop {
-                session: session.clone(),
-            },
-            false,
-        ),
-        Command::Send(session, line) => (
-            Request::Send {
-                session: session.clone(),
-                line: line.clone(),
-            },
-            false,
-        ),
+    let request = match &command {
+        Command::Ls | Command::Status => Request::Status,
+        Command::Stop(session) => Request::Stop {
+            session: session.clone(),
+        },
+        Command::Send(session, line) => Request::Send {
+            session: session.clone(),
+            line: line.clone(),
+        },
     };
     let text = serde_json::to_string(&request).map_err(|e| e.to_string())?;
     stream

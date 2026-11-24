@@ -1,7 +1,8 @@
 //! `muis-daemon`: owns the worker pool so terminals outlive a window.
 //!
-//! Not wired into the shell yet. The protocol and lifecycle are exercised by
-//! `tests/daemon.rs`; the next change makes the shell its first client.
+//! It also fronts the control surface: session verbs it can answer itself,
+//! and `ui` verbs forwarded to the attached window with the reply routed back
+//! to the caller. One socket, one place to audit.
 
 #[cfg(not(unix))]
 fn main() {
@@ -16,13 +17,14 @@ fn main() {
 
 #[cfg(unix)]
 mod imp {
-    use muis_daemon::protocol::{Reply, Request};
+    use muis_daemon::protocol::{Reply, Request, Role};
     use muis_daemon::{default_socket, WorkerEnv, WorkerLaunch, WorkerPool};
+    use std::collections::HashMap;
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
@@ -72,6 +74,19 @@ mod imp {
         })
     }
 
+    /// Everything a client handler needs to reach the other clients.
+    #[derive(Clone)]
+    struct Shared {
+        clients: Arc<Mutex<Vec<UnixStream>>>,
+        /// The attached window: connection id plus its stream, so a window
+        /// that reconnects replaces the old one instead of stacking.
+        ui: Arc<Mutex<Option<(u64, UnixStream)>>>,
+        /// Forwarded request slug -> (caller stream, caller's own id).
+        pending: Arc<Mutex<HashMap<u64, (UnixStream, u64)>>>,
+        next_slug: Arc<AtomicU64>,
+        next_conn: Arc<AtomicU64>,
+    }
+
     pub fn run() {
         let args = match parse_args() {
             Ok(args) => args,
@@ -102,13 +117,17 @@ mod imp {
         };
         let _ = std::fs::set_permissions(&args.socket, std::fs::Permissions::from_mode(0o600));
 
-        let clients: Arc<Mutex<Vec<UnixStream>>> = Arc::new(Mutex::new(Vec::new()));
-        let client_count = Arc::new(AtomicUsize::new(0));
-        let last_empty = Arc::new(Mutex::new(Instant::now()));
+        let shared = Shared {
+            clients: Arc::new(Mutex::new(Vec::new())),
+            ui: Arc::new(Mutex::new(None)),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            next_slug: Arc::new(AtomicU64::new(1)),
+            next_conn: Arc::new(AtomicU64::new(1)),
+        };
 
-        let sink_clients = Arc::clone(&clients);
+        let sink_shared = shared.clone();
         let sink = Arc::new(move |event: muis_daemon::SessionEvent| {
-            broadcast(&sink_clients, &Reply::event(event));
+            broadcast(&sink_shared.clients, &Reply::event(event));
             true
         });
 
@@ -127,6 +146,8 @@ mod imp {
         ));
 
         eprintln!("muis-daemon: listening on {}", args.socket.display());
+        let client_count = Arc::new(AtomicUsize::new(0));
+        let last_empty = Arc::new(Mutex::new(Instant::now()));
         start_idle_monitor(
             Arc::clone(&client_count),
             Arc::clone(&last_empty),
@@ -135,34 +156,84 @@ mod imp {
 
         for conn in listener.incoming() {
             let Ok(stream) = conn else { continue };
+            let conn_id = shared.next_conn.fetch_add(1, Ordering::SeqCst);
             client_count.fetch_add(1, Ordering::SeqCst);
-            clients
+            shared
+                .clients
                 .lock()
                 .unwrap()
                 .push(stream.try_clone().expect("clone client"));
             let pool = Arc::clone(&pool);
-            let clients = Arc::clone(&clients);
+            let shared = shared.clone();
             let client_count = Arc::clone(&client_count);
             let last_empty = Arc::clone(&last_empty);
             std::thread::spawn(move || {
-                serve_client(stream, pool, Arc::clone(&clients));
+                serve_client(stream, pool, shared.clone(), conn_id);
+                if let Some((id, _)) = shared.ui.lock().unwrap().as_ref() {
+                    if *id == conn_id {
+                        // The window went away; do not forward into a dead
+                        // socket, and say so to the next caller.
+                        *shared.ui.lock().unwrap() = None;
+                        eprintln!("muis-daemon: window detached");
+                    }
+                }
                 client_count.fetch_sub(1, Ordering::SeqCst);
                 *last_empty.lock().unwrap() = Instant::now();
             });
         }
     }
 
-    fn serve_client(
-        stream: UnixStream,
-        pool: Arc<WorkerPool>,
-        clients: Arc<Mutex<Vec<UnixStream>>>,
-    ) {
+    fn serve_client(stream: UnixStream, pool: Arc<WorkerPool>, shared: Shared, conn_id: u64) {
         let reader = BufReader::new(stream.try_clone().expect("clone for reading"));
         for line in reader.lines().map_while(Result::ok) {
             if line.trim().is_empty() {
                 continue;
             }
             let reply = match serde_json::from_str::<Request>(&line) {
+                Ok(Request::Hello { role }) => {
+                    if role == Role::Ui {
+                        *shared.ui.lock().unwrap() =
+                            Some((conn_id, stream.try_clone().expect("clone ui")));
+                        eprintln!("muis-daemon: window attached");
+                    }
+                    None
+                }
+                Ok(Request::Ui { id, op, args }) => {
+                    let ui = shared
+                        .ui
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .and_then(|(_, s)| s.try_clone().ok());
+                    match ui {
+                        Some(ui) => {
+                            let slug = shared.next_slug.fetch_add(1, Ordering::SeqCst);
+                            shared
+                                .pending
+                                .lock()
+                                .unwrap()
+                                .insert(slug, (stream.try_clone().expect("clone caller"), id));
+                            broadcast_one(&ui, &Reply::UiRequest { id: slug, op, args });
+                            None
+                        }
+                        None => Some(Reply::Error {
+                            message: "no window attached".to_string(),
+                        }),
+                    }
+                }
+                Ok(Request::UiReply { id, ok, result }) => {
+                    if let Some((caller, client_id)) = shared.pending.lock().unwrap().remove(&id) {
+                        broadcast_one(
+                            &caller,
+                            &Reply::UiReply {
+                                id: client_id,
+                                ok,
+                                result,
+                            },
+                        );
+                    }
+                    None
+                }
                 Ok(Request::Spawn { session }) => pool
                     .spawn_session(&session)
                     .err()
@@ -177,7 +248,7 @@ mod imp {
                 }
                 Ok(Request::Status) => Some(Reply::Status {
                     sessions: pool.sessions(),
-                    clients: clients.lock().unwrap().len(),
+                    clients: shared.clients.lock().unwrap().len(),
                 }),
                 Err(e) => Some(Reply::Error {
                     message: format!("bad request: {e}"),

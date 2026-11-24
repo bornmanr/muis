@@ -9,10 +9,22 @@
 use muis_core::ipc::WorkerToUi;
 use serde::{Deserialize, Serialize};
 
+/// What a connection is for. The window registers as `Ui`; everything else
+/// (the control CLI, scripts) is a `Client`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    Ui,
+    Client,
+}
+
 /// Client → daemon.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
+    /// Announce what this connection is. The daemon forwards `ui` requests to
+    /// the most recent `Ui` connection.
+    Hello { role: Role },
     /// Start the worker for a session. Idempotent, like the pool it wraps.
     Spawn { session: String },
     /// Forward one `UiToWorker` JSON line to that session's worker.
@@ -21,6 +33,22 @@ pub enum Request {
     Stop { session: String },
     /// Ask what the daemon currently holds.
     Status,
+    /// A client asking the window to do something the daemon cannot answer
+    /// on its own (`capture`, `new-tab`, `focus`, ...). `id` is the client's
+    /// own correlation id and is echoed back.
+    Ui {
+        id: u64,
+        op: String,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
+    /// The window's answer to a forwarded [`Reply::UiRequest`].
+    UiReply {
+        id: u64,
+        ok: bool,
+        #[serde(default)]
+        result: serde_json::Value,
+    },
 }
 
 /// Daemon → client.
@@ -38,6 +66,21 @@ pub enum Reply {
     },
     /// A request that could not be carried out.
     Error { message: String },
+    /// A client's `ui` request, forwarded to the attached window. `id` is the
+    /// daemon's routing slug, not the caller's id.
+    UiRequest {
+        id: u64,
+        op: String,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
+    /// The window's answer, routed back to the caller with its own id.
+    UiReply {
+        id: u64,
+        ok: bool,
+        #[serde(default)]
+        result: serde_json::Value,
+    },
 }
 
 impl Reply {
