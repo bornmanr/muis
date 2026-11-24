@@ -164,11 +164,13 @@ export function snorPrompt(text: string, context: string): string {
 export type SnorSlash =
   | { command: "git"; arg: string }
   | { command: "docs"; arg: string }
-  | { command: "file"; arg: string };
+  | { command: "file"; arg: string }
+  | { command: "todos"; arg: string }
+  | { command: "sessions"; arg: string };
 
 /** Recognize the read-only slash commands; anything else is a prompt. */
 export function parseSnorSlash(text: string): SnorSlash | null {
-  const m = /^\/(git|docs|file)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  const m = /^\/(git|docs|file|todos|sessions)(?:\s+([\s\S]*))?$/i.exec(text.trim());
   if (!m) return null;
   return {
     command: m[1].toLowerCase() as SnorSlash["command"],

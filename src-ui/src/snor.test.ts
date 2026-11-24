@@ -73,6 +73,11 @@ describe("snor slash commands", () => {
       command: "file",
       arg: "docs/plan.md",
     });
+    expect(parseSnorSlash("/todos")).toEqual({ command: "todos", arg: "" });
+    expect(parseSnorSlash("/sessions which ones touch docs?")).toEqual({
+      command: "sessions",
+      arg: "which ones touch docs?",
+    });
   });
 
   it("leaves prompts and unknown commands alone", () => {

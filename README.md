@@ -74,7 +74,8 @@ cargo run -p muis-shell
   presets, or browse to your own); it needs `llama-server` (Arch:
   `llama-cpp`). The model runs as a supervised loopback process and text
   never leaves the machine. Explicit read-only lookups: `/git`,
-  `/docs`, and `/file <path>` (workspace-scoped). See
+  `/docs`, `/file <path>`, `/todos`, and `/sessions` (workspace-scoped;
+  opencode todo counts come from the muis plugin). See
   `docs/snor-plan.md`.
 
 ## Tests

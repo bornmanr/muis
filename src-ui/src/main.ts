@@ -25,6 +25,7 @@ import { DoneTracker } from "./done";
 import { NotifyRouter, notifyEventFromCli, notifyEventFromCommand, type CliNotify } from "./notify";
 import {
   applyAgentReport,
+  dirsCompatible,
   isOpencodeTitle,
   opencodeResume,
   opencodeTitleFromLabel,
@@ -168,7 +169,19 @@ interface CliAgentSession {
   session?: string | null;
   directory?: string | null;
   tab_id?: string | null;
+  todo_done?: number | null;
+  todo_total?: number | null;
 }
+
+/** Latest opencode todo progress per session, pushed by the plugin. */
+interface AgentTodoInfo {
+  session: string;
+  dir: string;
+  title: string;
+  done: number;
+  total: number;
+}
+const agentTodoIndex = new Map<string, AgentTodoInfo>();
 
 /** Tabs whose restore launch already ran this session. */
 const agentLaunched = new Set<string>();
@@ -1718,6 +1731,30 @@ async function resolveSnorRead(text: string): Promise<SnorRead> {
   if (!cwd) throw new Error("no workspace directory to read from");
   const mask = (value: string): string =>
     cfg.snor.scrubSecrets ? scrubSecrets(value) : value;
+  if (slash.command === "todos" || slash.command === "sessions") {
+    const dir = store.currentWorkspace()?.dir ?? "";
+    const entries = [...agentTodoIndex.values()].filter((entry) =>
+      dirsCompatible(entry.dir, dir),
+    );
+    const rows = entries.map(
+      (entry) =>
+        `${entry.title || entry.session} (${entry.session}) — ${entry.done}/${entry.total} todos` +
+        (entry.dir ? ` @ ${entry.dir}` : ""),
+    );
+    return {
+      prompt:
+        slash.arg ||
+        (slash.command === "todos"
+          ? "Which tasks are still open?"
+          : "Summarize these opencode sessions."),
+      context: mask(
+        entries.length > 0
+          ? `opencode sessions:\n${rows.join("\n")}`
+          : "opencode sessions:\n(no todo data yet; the muis opencode plugin reports it)",
+      ),
+      source: slash.command === "todos" ? "opencode todos" : "opencode sessions",
+    };
+  }
   if (slash.command === "git") {
     const status = await invoke<string>("snor_git_status", { cwd });
     return {
@@ -1846,7 +1883,7 @@ function mountSnor(body: HTMLElement): void {
 
   snorInputEl = document.createElement("textarea");
   snorInputEl.className = "snor-input";
-  snorInputEl.placeholder = "Ask about this terminal… (/git, /docs, /file <path>)";
+  snorInputEl.placeholder = "Ask about this terminal… (/git, /docs, /file, /todos, /sessions)";
   snorInputEl.rows = 3;
   snorInputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -2829,6 +2866,18 @@ function applyNotification(tab: Tab, ev: NotifyEvent): boolean {
 /** A `muis-agent session` report forwarded by the shell. */
 function handleAgentSession(req: CliAgentSession): void {
   if (!req?.tab_id) return;
+  if (req.session) {
+    const ws = store.workspaces.find((w) => w.tabs.some((t) => t.id === req.tab_id));
+    const tab = ws?.tabs.find((t) => t.id === req.tab_id);
+    const known = agentTodoIndex.get(req.session);
+    agentTodoIndex.set(req.session, {
+      session: req.session,
+      dir: req.directory ?? known?.dir ?? "",
+      title: tab?.agentTitle ?? known?.title ?? "",
+      done: req.todo_done ?? known?.done ?? 0,
+      total: req.todo_total ?? known?.total ?? 0,
+    });
+  }
   if (applyAgentReport(store.workspaces, req.tab_id, req.session, req.directory) !== "ignored") {
     scheduleSave();
   }

@@ -47,6 +47,11 @@ pub struct AgentSessionRequest {
     /// Originating tab, injected into ptys as `MUIS_TAB_ID`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<String>,
+    /// Todo progress reported by the opencode plugin (`todo.updated`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub todo_done: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub todo_total: Option<u32>,
 }
 
 impl AgentSessionRequest {
@@ -56,7 +61,16 @@ impl AgentSessionRequest {
             session,
             directory,
             tab_id,
+            todo_done: None,
+            todo_total: None,
         }
+    }
+
+    /// Attach todo progress without changing the session identity.
+    pub fn with_todos(mut self, done: u32, total: u32) -> Self {
+        self.todo_done = Some(done);
+        self.todo_total = Some(total);
+        self
     }
 }
 
