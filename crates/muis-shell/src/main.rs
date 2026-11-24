@@ -57,8 +57,9 @@ fn worker_launch() -> Option<WorkerLaunch> {
 /// Serve a local file to the browser pane. The viewer keeps an allow-list of
 /// paths the UI asked for, so the returned loopback URL reads exactly one
 /// file and nothing else.
-#[tauri::command]
-fn view_file(path: String) -> Result<String, String> {
+/// Loopback URL for a local file. One server per process; the viewer keeps
+/// its own allow-list of what the UI asked for.
+fn viewer_url(path: &str) -> Result<String, String> {
     use std::sync::OnceLock;
     static VIEWER: OnceLock<Result<muis_core::view::ViewServer, String>> = OnceLock::new();
     let server = VIEWER.get_or_init(|| {
@@ -67,7 +68,12 @@ fn view_file(path: String) -> Result<String, String> {
     server
         .as_ref()
         .map_err(|e| e.clone())?
-        .url_for(std::path::Path::new(&path))
+        .url_for(std::path::Path::new(path))
+}
+
+#[tauri::command]
+fn view_file(path: String) -> Result<String, String> {
+    viewer_url(&path)
 }
 
 #[tauri::command]
@@ -638,6 +644,18 @@ fn main() {
                 ClientRequest::OpenUrl(req) => {
                     let _ = handle.emit("muis-open-url", &req);
                 }
+                ClientRequest::ViewFile(req) => match viewer_url(&req.path) {
+                    // The pane already knows how to open a URL; a viewed file
+                    // is just one on the loopback viewer.
+                    Ok(url) => {
+                        if let Some(open) =
+                            muis_core::notify::OpenUrlRequest::new(&url, req.tab_id, req.session)
+                        {
+                            let _ = handle.emit("muis-open-url", &open);
+                        }
+                    }
+                    Err(e) => log::warn!("cannot view {}: {e}", req.path),
+                },
             }) {
                 log::warn!("notification endpoint unavailable ({socket}): {e}");
             }

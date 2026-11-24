@@ -22,6 +22,7 @@ pub const AGENT_KIND: &str = "agent-session";
 pub const ACTIVITY_KIND: &str = "agent-activity";
 pub const STATE_KIND: &str = "agent-state";
 pub const OPEN_KIND: &str = "open-url";
+pub const VIEW_KIND: &str = "view-file";
 pub const ACTIVITY_RUNNING: &str = "running";
 
 /// The only lifecycle states an agent may report. A closed set keeps the
@@ -208,6 +209,37 @@ impl AgentStateRequest {
     }
 }
 
+/// Ask the terminal to render a local file in its viewer pane. The path is
+/// absolute and already resolved by the caller: the shell never guesses a cwd
+/// for a request that arrived over a socket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewFileRequest {
+    pub kind: String,
+    pub path: String,
+    /// Originating tab, injected into ptys as `MUIS_TAB_ID`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+}
+
+impl ViewFileRequest {
+    /// Reject anything that is not an absolute path: a relative path from a
+    /// socket request has no meaningful base.
+    pub fn new(path: &str, tab_id: Option<String>, session: Option<String>) -> Option<Self> {
+        let path = path.trim();
+        if !path.starts_with('/') || path.chars().any(|c| c.is_control()) {
+            return None;
+        }
+        Some(Self {
+            kind: VIEW_KIND.to_string(),
+            path: path.to_string(),
+            tab_id,
+            session,
+        })
+    }
+}
+
 /// Every request a local client may send.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientRequest {
@@ -216,6 +248,7 @@ pub enum ClientRequest {
     AgentActivity(ActivityRequest),
     AgentState(AgentStateRequest),
     OpenUrl(OpenUrlRequest),
+    ViewFile(ViewFileRequest),
 }
 
 /// True for http(s) URLs with a non-empty host and no control characters.
@@ -298,6 +331,9 @@ pub fn decode_client(line: &str) -> Option<ClientRequest> {
         Some(OPEN_KIND) => serde_json::from_value(value)
             .ok()
             .map(ClientRequest::OpenUrl),
+        Some(VIEW_KIND) => serde_json::from_value(value)
+            .ok()
+            .map(ClientRequest::ViewFile),
         _ => serde_json::from_value(value)
             .ok()
             .map(ClientRequest::Notify),
@@ -329,6 +365,11 @@ pub fn send_activity(socket: &str, req: &ActivityRequest) -> io::Result<()> {
 
 /// Send one agent lifecycle report to a running muis.
 pub fn send_agent_state(socket: &str, req: &AgentStateRequest) -> io::Result<()> {
+    send_value(socket, &serde_json::to_value(req)?)
+}
+
+/// Send one view-file request to a running muis.
+pub fn send_view_file(socket: &str, req: &ViewFileRequest) -> io::Result<()> {
     send_value(socket, &serde_json::to_value(req)?)
 }
 
@@ -539,6 +580,20 @@ mod tests {
             decode_client(r#"{"kind":"agent-activity","state":"running"}"#),
             Some(ClientRequest::AgentActivity(bare))
         );
+    }
+
+    #[test]
+    fn view_file_needs_an_absolute_path_and_routes_by_kind() {
+        let req =
+            ViewFileRequest::new("/tmp/notes.md", Some("t1".into()), Some("ses_a".into())).unwrap();
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("view-file"));
+        assert_eq!(
+            decode_client(&json),
+            Some(ClientRequest::ViewFile(req.clone()))
+        );
+        assert!(ViewFileRequest::new("notes.md", None, None).is_none());
+        assert!(ViewFileRequest::new("/tmp/a\u{7}b", None, None).is_none());
     }
 
     #[test]

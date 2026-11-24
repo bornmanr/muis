@@ -19,7 +19,9 @@
 //!                   [--model NAME] [--session ses_ID] [--tab ID]
 //! ```
 
-use muis_core::notify::{self, AgentSessionRequest, AgentStateRequest, OpenUrlRequest};
+use muis_core::notify::{
+    self, AgentSessionRequest, AgentStateRequest, OpenUrlRequest, ViewFileRequest,
+};
 
 const USAGE: &str = "\
 usage: muis-agent session <ses_ID> [--dir DIR] [--tab ID] [--socket NAME]
@@ -27,6 +29,7 @@ usage: muis-agent session <ses_ID> [--dir DIR] [--tab ID] [--socket NAME]
        muis-agent open <URL> [--session ses_ID] [--tab ID] [--socket NAME]
        muis-agent report <working|blocked|done|idle> [--agent NAME]
                   [--model NAME] [--session ses_ID] [--tab ID] [--socket NAME]
+       muis-agent view <PATH> [--tab ID] [--socket NAME]
 
 session/clear report the agent session currently open in a muis tab, so the
 tab can resume exactly that session after a restart. open shows an http(s)
@@ -47,6 +50,7 @@ enum Command {
         agent: Option<String>,
         model: Option<String>,
     },
+    View(String),
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -115,6 +119,10 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Cli, String> {
                 }
             }
             Command::Open { url }
+        }
+        Some("view") => {
+            let path = positional.ok_or("view needs a path")?;
+            Command::View(path)
         }
         Some("report") => {
             let state = positional.ok_or("report needs a state")?;
@@ -197,6 +205,18 @@ pub fn run_with(args: impl IntoIterator<Item = String>) -> i32 {
                 return 2;
             };
             notify::send_open_url(&socket, &req)
+        }
+        Some(Command::View(path)) => {
+            // The caller's cwd is the tab's cwd, so resolve here: the shell
+            // gets an absolute path it can hand to the viewer.
+            let resolved = std::fs::canonicalize(&path)
+                .map(|p| p.display().to_string())
+                .unwrap_or(path);
+            let Some(req) = ViewFileRequest::new(&resolved, tab, None) else {
+                eprintln!("muis-agent: view needs an absolute path: {resolved}");
+                return 2;
+            };
+            notify::send_view_file(&socket, &req)
         }
         Some(Command::Report {
             state,
@@ -293,6 +313,13 @@ mod tests {
             })
         );
         assert_eq!(bare.session, None);
+    }
+
+    #[test]
+    fn parses_view() {
+        let cli = parse_args(args(&["view", "README.md", "--tab", "t1"])).unwrap();
+        assert_eq!(cli.command, Some(Command::View("README.md".into())));
+        assert!(parse_args(args(&["view"])).is_err());
     }
 
     #[test]

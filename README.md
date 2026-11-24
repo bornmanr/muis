@@ -235,7 +235,8 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
 - Zoom: Ctrl+= / Ctrl+- change the terminal font size live, Ctrl+0 resets;
   Ctrl+Shift+= / Ctrl+Shift+- scale the whole window for reading from a
   distance.
-- View a local file: the command palette's "View file…" renders an image,
+- View a local file: `muis-agent view README.md` (or the command palette's
+  "View file…") renders an image,
   PDF, text, diff or markdown in the docked pane. It is served from a
   loopback-only viewer with a token and an allow-list of the files you asked
   for, and never executes the file it shows.
