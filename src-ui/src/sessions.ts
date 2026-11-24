@@ -30,6 +30,8 @@ export interface Workspace {
   dir: string;
   tabs: Tab[];
   active: number;
+  /** Last http(s) page shown in the browser pane for this session. */
+  url?: string;
 }
 
 /**
@@ -189,6 +191,22 @@ export class SessionStore {  workspaces: Workspace[] = [];
     return true;
   }
 
+  /**
+   * Remember the pane's page for a session. Only absolute http(s) URLs are
+   * stored: the same rule the pane and `muis-agent` enforce, so a restored
+   * file can never point the frame at anything else.
+   */
+  setWorkspaceUrl(wsIndex: number, url: string | null): boolean {
+    const ws = this.workspaces[wsIndex];
+    if (!ws) return false;
+    const next = url === null ? undefined : validHttpUrl(url) ?? undefined;
+    if (url !== null && next === undefined) return false;
+    if (ws.url === next) return false;
+    if (next === undefined) delete ws.url;
+    else ws.url = next;
+    return true;
+  }
+
   /** Set or clear a tab's accent. Anything but #rrggbb is refused. */
   setTabColor(wsIndex: number, tabId: string, color: string | null): boolean {
     const ws = this.workspaces[wsIndex];
@@ -278,6 +296,17 @@ function text(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+/** Absolute http(s) URL, or null. Mirrors `browser.ts` and the agent CLI. */
+function validHttpUrl(value: string): string | null {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.hostname ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function sanitizeWorkspace(value: unknown): Workspace | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as Record<string, unknown>;
@@ -291,7 +320,10 @@ function sanitizeWorkspace(value: unknown): Workspace | null {
   });
   let active = typeof raw.active === "number" ? Math.floor(raw.active) : 0;
   if (active < 0 || active >= tabs.length) active = 0;
-  return { id, name, dir, tabs, active };
+  const ws: Workspace = { id, name, dir, tabs, active };
+  const url = typeof raw.url === "string" ? validHttpUrl(raw.url) : null;
+  if (url) ws.url = url;
+  return ws;
 }
 
 function sanitizeTab(value: unknown): Tab | null {

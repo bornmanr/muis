@@ -1946,6 +1946,12 @@ function openPreview(raw: string, focus = false): boolean {
   previewUrlInput.value = url;
   previewUrl = url;
   previewOpen = true;
+  // Remember it for this session so reopening the pane lands where it was.
+  const ws = store.currentWorkspace();
+  if (ws && ws.url !== url) {
+    ws.url = url;
+    scheduleSave();
+  }
   applyPreviewWidth();
   renderPreview();
   refitActive();
@@ -1962,6 +1968,9 @@ function closePreview(): void {
 
 function focusPreview(): void {
   if (!previewOpen) {
+    // Reopen on this session's last page instead of an empty pane.
+    const saved = store.currentWorkspace()?.url;
+    if (saved && openPreview(saved, true)) return;
     previewOpen = true;
     applyPreviewWidth();
     renderPreview();

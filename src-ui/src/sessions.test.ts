@@ -329,4 +329,27 @@ describe("SessionStore persistence", () => {
     expect(back.workspaces[0].tabs[0].color).toBeUndefined();
     expect(back.workspaces[0].tabs[0].pinned).toBeUndefined();
   });
+
+  it("remembers a session's pane URL and refuses anything but http(s)", () => {
+    const s = store();
+    expect(s.workspaces[0].url).toBeUndefined();
+    expect(s.setWorkspaceUrl(0, "http://localhost:5173")).toBe(true);
+    expect(s.workspaces[0].url).toBe("http://localhost:5173/");
+    expect(s.setWorkspaceUrl(0, "javascript:alert(1)")).toBe(false);
+    expect(s.setWorkspaceUrl(0, "file:///etc/passwd")).toBe(false);
+    expect(s.workspaces[0].url).toBe("http://localhost:5173/");
+
+    const back = SessionStore.fromJSON(s.toJSON());
+    expect(back.workspaces[0].url).toBe("http://localhost:5173/");
+    expect(back.setWorkspaceUrl(0, null)).toBe(true);
+    expect(back.workspaces[0].url).toBeUndefined();
+  });
+
+  it("drops an invalid pane URL from a restored file", () => {
+    const s = store();
+    const json = JSON.parse(s.toJSON());
+    json.workspaces[0].url = "javascript:alert(1)";
+    const back = SessionStore.fromJSON(JSON.stringify(json));
+    expect(back.workspaces[0].url).toBeUndefined();
+  });
 });
