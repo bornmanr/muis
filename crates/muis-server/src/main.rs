@@ -145,6 +145,9 @@ async fn start(options: Options, token: Arc<String>, socket: String) -> Result<(
             ClientRequest::AgentActivity(req) => ("muis-agent-activity", serde_json::to_value(req)),
             ClientRequest::AgentState(req) => ("muis-agent-state", serde_json::to_value(req)),
             ClientRequest::OpenUrl(req) => ("muis-open-url", serde_json::to_value(req)),
+            // Native-only for now: the browser host has no file route, so the
+            // frontend ignores this event.
+            ClientRequest::ViewFile(req) => ("muis-view-file", serde_json::to_value(req)),
         };
         let Ok(payload) = payload else {
             return;

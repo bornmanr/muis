@@ -47,7 +47,9 @@ fn main() {
     code.push_str("pub fn get(path: &str) -> Option<&'static [u8]> {\n    match path {\n");
     for name in &files {
         let abs = normalize(&dist.join(name));
-        code.push_str(&format!("        {name:?} => Some(include_bytes!({abs:?})),\n"));
+        code.push_str(&format!(
+            "        {name:?} => Some(include_bytes!({abs:?})),\n"
+        ));
     }
     code.push_str("        _ => None,\n    }\n}\n");
 
