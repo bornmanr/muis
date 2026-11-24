@@ -2203,6 +2203,9 @@ name = "muis-agent"
 version = "0.1.0"
 dependencies = [
  "muis-core",
+ "muis-daemon",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

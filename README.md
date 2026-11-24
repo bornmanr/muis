@@ -285,6 +285,23 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
   that refuse framing get the ↗ button, which hands the URL to the system
   browser.
 
+## MCP
+
+`muis-mcp` speaks MCP over stdio and exposes the control surface as tools:
+`muis_ls`, `muis_capture`, `muis_focus`, `muis_new_tab`, `muis_view`,
+`muis_open_url`. They go through the same daemon socket and window as
+`muis-ctl`, so an agent can only do what the control surface allows; with the
+window closed they answer that no window is attached.
+
+Codex (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.muis]
+command = "muis-mcp"
+```
+
+opencode: add a local MCP server named `muis` whose command is `muis-mcp`.
+
 ## Tests
 
 - `cargo test --workspace`: config load/save, shell probe, IPC roundtrips

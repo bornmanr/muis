@@ -12,5 +12,12 @@ path = "src/lib.rs"
 name = "muis-agent"
 path = "src/main.rs"
 
+[[bin]]
+name = "muis-mcp"
+path = "src/bin/muis-mcp.rs"
+
 [dependencies]
 muis-core = { path = "../muis-core" }
+muis-daemon = { path = "../muis-daemon" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

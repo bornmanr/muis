@@ -2841,7 +2841,11 @@ function bufferLines(tabId: string): string[] {
  * One request forwarded by the daemon on behalf of `muis-ctl` or an agent.
  * The answer always goes back, including on failure, so a caller never hangs.
  */
-function handleUiRequest(req: { id: number; op: string; args?: Record<string, unknown> }): void {
+async function handleUiRequest(req: {
+  id: number;
+  op: string;
+  args?: Record<string, unknown>;
+}): Promise<void> {
   let ok = true;
   let result: unknown;
   try {
@@ -2893,6 +2897,21 @@ function handleUiRequest(req: { id: number; op: string; args?: Record<string, un
         result = { tab: id };
         break;
       }
+      case "view": {
+        // Local file -> the loopback viewer -> the pane.
+        const path = String(req.args?.path ?? "").trim();
+        if (!path) throw new Error("view needs a path");
+        const url = await shellCall<string>("view_file", { path });
+        if (!openPreview(url)) throw new Error("the pane refused the viewer URL");
+        result = { url };
+        break;
+      }
+      case "open-url": {
+        const raw = String(req.args?.url ?? "");
+        if (!openPreview(raw)) throw new Error(`not an http(s) URL: ${raw}`);
+        result = { url: raw };
+        break;
+      }
       default:
         throw new Error(`unknown op: ${req.op}`);
     }
@@ -2905,7 +2924,7 @@ function handleUiRequest(req: { id: number; op: string; args?: Record<string, un
 
 subscribe<{ id: number; op: string; args?: Record<string, unknown> }>(
   "muis-ui-request",
-  handleUiRequest,
+  (req) => void handleUiRequest(req),
 );
 
 /* ---------------- links ---------------- */
