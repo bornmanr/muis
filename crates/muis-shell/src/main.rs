@@ -9,11 +9,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+mod backend;
 mod bridge;
 mod logging;
 mod persist;
 
-use bridge::{env_for_shell, EventSink, WorkerLaunch, WorkerPool, WORKER_EVENT};
+use backend::Backend;
+use bridge::{env_for_shell, EventSink, WorkerLaunch, WORKER_EVENT};
 use muis_core::notify::ClientRequest;
 use tauri::{Emitter, Manager};
 
@@ -496,13 +498,13 @@ fn list_subdirs(path: String, limit: usize) -> Vec<String> {
 }
 
 #[tauri::command]
-fn worker_spawn(pool: tauri::State<WorkerPool>, session_id: String) -> Result<(), String> {
+fn worker_spawn(pool: tauri::State<Backend>, session_id: String) -> Result<(), String> {
     pool.spawn_session(&session_id)
 }
 
 #[tauri::command]
 fn worker_send(
-    pool: tauri::State<WorkerPool>,
+    pool: tauri::State<Backend>,
     session_id: String,
     line: String,
 ) -> Result<(), String> {
@@ -510,7 +512,7 @@ fn worker_send(
 }
 
 #[tauri::command]
-fn worker_stop(pool: tauri::State<WorkerPool>, session_id: String) {
+fn worker_stop(pool: tauri::State<Backend>, session_id: String) {
     pool.stop_session(&session_id);
 }
 
@@ -590,8 +592,11 @@ fn main() {
 
             let handle = app.handle().clone();
             let sink: EventSink = Arc::new(move |event| handle.emit(WORKER_EVENT, &event).is_ok());
-            app.handle()
-                .manage(WorkerPool::new(sink, launch, env_for_shell()));
+            app.handle().manage(Backend::connect(
+                sink,
+                launch.map(|WorkerLaunch(path)| path),
+                env_for_shell(),
+            ));
 
             // Notification endpoint for `muis-notify` clients. One per-user
             // socket; each request is forwarded to the frontend, which routes

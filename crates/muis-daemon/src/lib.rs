@@ -11,6 +11,18 @@
 
 pub mod protocol;
 
+/// The socket a client and the daemon agree on: `$XDG_RUNTIME_DIR/muis`,
+/// falling back to a per-user temp directory.
+pub fn default_socket() -> PathBuf {
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let user = std::env::var("USER").unwrap_or_else(|_| "default".to_string());
+            std::env::temp_dir().join(format!("muis-{user}"))
+        });
+    base.join("muis").join("daemon.sock")
+}
+
 use muis_core::ipc::{decode_worker, WorkerToUi};
 use serde::Serialize;
 use std::collections::HashMap;

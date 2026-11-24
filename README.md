@@ -20,6 +20,9 @@ emulation is xterm.js, not ours.
 ```text
 crates/muis-core/    session model, config, shell probe, UI/worker IPC (no UI deps)
 crates/muis-worker/  muis-worker binary: one process per session, pty via portable-pty
+crates/muis-daemon/  worker pool + muis-daemon binary: owns workers so sessions
+                     outlive the window (the shell falls back to an in-process
+                     pool when the daemon cannot be reached)
 crates/muis-notify/  muis-notify binary: send a notification to the running window
 crates/muis-shell/   muis binary: Tauri 2 window (WebKitGTK)
 crates/muis-server/  muis-server binary: the same UI in a browser (HTTP + WS)
