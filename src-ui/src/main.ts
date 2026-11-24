@@ -1563,10 +1563,10 @@ function sessionElement(w: Workspace, selected: boolean, col: string): HTMLEleme
     icon.style.border = `1px solid ${col}55`;
   }
   const meta = el("div", "s-meta");
-  meta.append(
-    el("div", "s-name", w.name),
-    el("div", "s-sub", `${w.tabs.length} tab${w.tabs.length === 1 ? "" : "s"} · ${shortPath(w.dir)}`),
-  );
+  const sub = el("div", "s-sub", `${w.tabs.length} tab${w.tabs.length === 1 ? "" : "s"} · ${shortPath(w.dir)}`);
+  // The subtitle truncates; the tooltip carries the full path.
+  sub.title = w.dir;
+  meta.append(el("div", "s-name", w.name), sub);
   d.append(icon, meta);
   // Hidden sessions surface work the user has not dealt with: a fresh alert
   // pulses with a count, one the user already glanced at (or a dead pty)
@@ -1794,20 +1794,23 @@ function renderTerms(ws: Workspace | undefined): void {
 
 /* ---------------- statusbar ---------------- */
 
+const stSession = el("span", "pill", "");
 const stCwd = el("span", "", "");
 const stGit = el("span", "pill", "");
 /** Which agent is running in the active tab, from its own reports. */
 const stAgent = el("span", "", "");
 const stClock = el("span", "clock", "");
 // Context on the left, clock on the far right.
-statusbar.append(stCwd, stGit, stAgent, el("span", ""), stClock);
-(statusbar.children[3] as HTMLElement).style.marginLeft = "auto";
+statusbar.append(stSession, stCwd, stGit, stAgent, el("span", ""), stClock);
+(statusbar.children[4] as HTMLElement).style.marginLeft = "auto";
 
 const gitCache = new Map<string, string>();
 
 function renderStatusbar(): void {
   const ws = store.currentWorkspace();
   const tab = ws?.tabs[ws.active];
+  stSession.textContent = ws ? `● ${ws.name}` : "";
+  stSession.title = ws?.dir ?? "";
   stCwd.textContent = tab ? shortPath(tab.cwd) : "";
   if (tab) {
     const cwd = tab.cwd;
@@ -1840,6 +1843,7 @@ function renderStatusbar(): void {
 /** Show/hide each statusbar segment per config. */
 function applyStatusbarVisibility(): void {
   const segs: [string, HTMLElement][] = [
+    ["session", stSession],
     ["cwd", stCwd],
     ["git", stGit],
     ["agent", stAgent],
@@ -2285,6 +2289,7 @@ for (const s of ["none", "visual", "audible", "both"]) {
   optBell.append(o);
 }
 const SEGMENTS: [string, string][] = [
+  ["session", "session"],
   ["cwd", "cwd"],
   ["git", "git"],
   ["agent", "agent"],
