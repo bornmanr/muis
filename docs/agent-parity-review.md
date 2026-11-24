@@ -557,3 +557,87 @@ Phases:
 | D32 | **yes (both)** | `Ctrl+=`/`-`/`0` font zoom persisted to `AppConfig.fontSize`; `Ctrl+Shift+=` whole-window scale. |
 | D35 | **yes** | Browser client parity + "open in browser"/"open in app" handoff; PWA manifest; `Ctrl+W` in a browser client must detach, not kill. Live handoff requires D01. |
 | D36 | **defer** | Trigger: the Snor engine exists. Transport is D12 `send`; then add addressing, provenance marker, delivery receipt, rate limit, blocked-tab confirm. |
+
+---
+
+## 12. Human hand testing (required at the end of every phase)
+
+CI proves the contracts; it cannot prove focus, feel or rendering. Every
+phase ends with this pass on a real desktop, and a phase is not done until
+it has been run and noted in the PR. Keep each script short enough that it
+actually gets run.
+
+Universal gates, every phase:
+
+- exactly one terminal surface is visible across sessions/tabs (the manual
+  twin of the regression test);
+- no double toast when an agent finishes (hook path and heuristic must
+  agree);
+- a plain shell tab shows no agent chip, tooltip or statusbar segment;
+- restart muis: layout, tabs and agent sessions come back without errors.
+
+### P1 — agent awareness (before merging the P1 PR)
+
+1. `opencode` in a tab, ask it to touch a file it needs permission for →
+   tab turns red, chip reads "needs you", session dot red.
+2. `Ctrl+Shift+I` → the tab is listed first (blocked before done), age
+   counts up; `Enter` jumps and the pulse stops while the mark stays.
+3. Two waiting tabs → `Ctrl+Shift+O` cycles between them without opening
+   the list.
+4. Approve the permission → the tab leaves "needs you" and shows "working".
+5. Let a turn finish → "waiting" (green), one toast only.
+6. `Ctrl+=` three times with an agent TUI running → text grows, grid
+   re-fits, no flicker; restart muis → size persisted. `Ctrl+0` resets.
+7. `Ctrl+Shift+=` → the whole window scales, terminal re-fits.
+8. Ctrl+click a URL in build output → opens in the docked pane;
+   Ctrl+Shift+click → copies. Ctrl+click `src/foo.ts:12` → clipboard holds
+   the absolute path.
+9. Paste a 30-line trace into `opencode` → one confirm; one line → no
+   confirm; paste into a tab waiting for approval → confirm.
+10. `printf '\033]9;4;1;40\007'` in a shell tab → thin bar at 40%;
+    `printf '\033]9;4;0\007'` clears it; a new command clears it too.
+11. Switch between two sessions: only one terminal surface visible at any
+    time; the blocked session's dot stays red.
+
+### P2 — persistence (before merging each P2 PR)
+
+1. Start a long agent turn, close the window, reopen → the tab resumes the
+   same session and shows the tail of the output.
+2. Leave an idle finished tab past the parking window → no agent process
+   (`ps`), click the tab → it resumes.
+3. A `blocked` tab is never parked inside the window.
+4. A tab running `vim` or an unknown TUI is never parked.
+5. `muis daemon status`, then `kill -9` the daemon → no `muis-worker`
+   survives; the next launch starts clean.
+6. Open one session in the browser tab and the native window → both show
+   it, typing in one appears in the other, the other stays read-only.
+7. Reboot with retention on → a parked tab still shows history.
+
+### P3 — control surface (before merging each P3 PR)
+
+1. `muis ls` lists sessions/tabs with ids; `muis capture <tab>` returns
+   the last lines; `muis send <tab> "echo hi\n"` types into it.
+2. `stat -c %a` on the socket shows `600`, and `ss -lntp` shows no TCP
+   listener for muis.
+3. `muis open http://localhost:5173` and the agent's `muis_open_url` both
+   land in the pane; `muis view README.md` renders markdown, not raw text.
+4. An agent navigates, snapshots, clicks and reads the console through the
+   pane and the result comes back.
+5. The viewer opens an image, a PDF and a diff without disturbing the
+   terminal surface.
+6. In browser mode automation is off by default; enabling the agent pane
+   shows a badge and resets on restart.
+
+### P4 — workflow and polish (before merging each P4 PR)
+
+1. `muis shell-integration install` in fish/zsh/bash → command bar shows
+   real commands and durations; `--uninstall` restores the rc files.
+2. Drop a theme file in `~/.config/muis/themes/` → appears in settings,
+   applies live, survives restart.
+3. `muis new --worktree feat/x` → branch at the documented path, recipe
+   ran, tab opens there; a dirty tree refuses.
+4. `muis new --agent opencode "add pagination"` → tab named from the task,
+   agent already running with the prompt.
+5. A Nerd Font glyph renders without a tofu box.
+6. Memory: a fact saved in one opencode session appears in the next
+   session's prompt and never grows past the cap.
