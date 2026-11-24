@@ -568,6 +568,9 @@ fn main() {
                 ClientRequest::AgentActivity(req) => {
                     let _ = handle.emit("muis-agent-activity", &req);
                 }
+                ClientRequest::AgentState(req) => {
+                    let _ = handle.emit("muis-agent-state", &req);
+                }
                 ClientRequest::OpenUrl(req) => {
                     let _ = handle.emit("muis-open-url", &req);
                 }
@@ -618,6 +621,21 @@ mod tests {
         assert!(OPENCODE_PLUGIN_SRC.contains("await runHelper("));
         assert!(OPENCODE_PLUGIN_SRC.contains("Could not open"));
         assert!(OPENCODE_PLUGIN_SRC.contains("failure ||"));
+    }
+
+    #[test]
+    fn opencode_plugin_reports_agent_state() {
+        // The tab's real state comes from these reports. If the plugin loses
+        // them the chrome silently falls back to the done-only heuristic, so
+        // lock the helper call and every state it emits.
+        assert!(OPENCODE_PLUGIN_SRC.contains("[\"report\", value, \"--agent\", \"opencode\"]"));
+        assert!(OPENCODE_PLUGIN_SRC.contains("reportState"));
+        for state in ["blocked", "working", "done"] {
+            assert!(
+                OPENCODE_PLUGIN_SRC.contains(&format!("state(\"{state}\"")),
+                "plugin must report {state}"
+            );
+        }
     }
 
     #[test]

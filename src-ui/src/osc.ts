@@ -28,6 +28,10 @@ export type OscEvent =
   | { type: "title"; title: string }
   | { type: "cmd-start"; cmd?: string }
   | { type: "cmd-end"; exit: number | null }
+  /** OSC 9;4 progress: 0 clear, 1 normal, 2 error, 3 indeterminate, 4 paused. */
+  | { type: "progress"; state: number; percent: number | null }
+  /** OSC 777 fallback for an agent too simple to run `muis-agent report`. */
+  | { type: "agent-state"; state: string }
   | NotifyEvent;
 
 /** In-flight OSC 99 fragments, keyed by notification id. */
@@ -118,6 +122,18 @@ function parseOscBody(
     // OSC 9 ; message BEL. ConEmu overloads OSC 9 with numeric subcommands
     // (9;4 progress, 9;9 cwd); a leading all-digit field is not a message.
     const first = pt.split(";", 1)[0];
+    if (first === "4") {
+      // OSC 9 ; 4 ; state ; percent — the same channel Windows Terminal,
+      // WezTerm and kitty use, so tools already emit it.
+      const parts = pt.split(";");
+      const state = parseInt(parts[1] ?? "", 10);
+      if (Number.isNaN(state) || state < 0 || state > 4) return null;
+      const rawPercent = parseInt(parts[2] ?? "", 10);
+      const percent = Number.isNaN(rawPercent)
+        ? null
+        : Math.max(0, Math.min(100, rawPercent));
+      return { type: "progress", state, percent };
+    }
     if (first.length > 0 && /^\d+$/.test(first)) return null;
     const body = pt.trim();
     if (!body) return null;
@@ -127,6 +143,12 @@ function parseOscBody(
     // OSC 777 ; notify ; title ; body BEL. Only the notify subtype is a
     // notification; other subtypes (e.g. container metadata) are ignored.
     const parts = pt.split(";");
+    if (parts[0] === "muis-state") {
+      // OSC 777 ; muis-state ; working|blocked|done|idle
+      const state = (parts[1] ?? "").trim();
+      const known = ["working", "blocked", "done", "idle"];
+      return known.includes(state) ? { type: "agent-state", state } : null;
+    }
     if (parts[0] !== "notify") return null;
     const title = (parts[1] ?? "").trim();
     const body = parts.slice(2).join(";").trim();

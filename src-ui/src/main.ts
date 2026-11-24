@@ -1,4 +1,4 @@
-import { Terminal, type ILinkHandler } from "xterm";
+import { Terminal, type ILink, type ILinkHandler } from "xterm";
 import "xterm/css/xterm.css";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -21,6 +21,7 @@ import { shouldToastOnFinish } from "./finish";
 import { collectMatches, type SearchHit, type SearchScope, type SearchableTab } from "./searchall";
 import { resolveShortcut } from "./shortcuts";
 import { DoneTracker, sidebarAttention, tabAttentionLabel, type Attention } from "./done";
+import { AgentStateTracker, agentLabel, isAgentState, stateChip, type AgentState } from "./agentState";
 import { NotifyRouter, notifyEventFromCli, notifyEventFromCommand, type CliNotify } from "./notify";
 import {
   isInjectedResume,
@@ -213,6 +214,16 @@ interface CliOpenUrl {
   session?: string | null;
 }
 
+/** A `muis-agent report` forwarded by the shell. */
+interface CliAgentState {
+  kind?: string;
+  state?: string;
+  tab_id?: string | null;
+  session?: string | null;
+  agent?: string | null;
+  model?: string | null;
+}
+
 /** Tabs whose restore launch already ran this session. */
 const agentLaunched = new Set<string>();
 /** Resume line injected per tab, so the shell's cmd-start for it is ignored. */
@@ -264,6 +275,7 @@ function subscribe<T>(event: string, handler: (payload: T) => void): void {
 subscribe<CliNotify>("muis-notify", handleNotifyRequest);
 subscribe<CliAgentSession>("muis-agent-session", handleAgentSession);
 subscribe<CliAgentActivity>("muis-agent-activity", handleAgentActivity);
+subscribe<CliAgentState>("muis-agent-state", handleAgentState);
 subscribe<CliOpenUrl>("muis-open-url", handleOpenUrl);
 
 /** View options; loaded from disk in init, edited in the settings dialog. */
@@ -693,6 +705,63 @@ function ensureView(sessionId: string, tab: Tab): TabView {
     leave: () => {},
   } as ILinkHandler;
 
+  // Plain-text links: agent output is full of URLs and `path:line` refs, and
+  // OSC 8 is rare. Ctrl+click opens (or copies a path); a bare click does
+  // nothing, so selecting text still works.
+  term.registerLinkProvider({
+    provideLinks(y, callback) {
+      const line = term.buffer.active.getLine(y - 1);
+      if (!line) {
+        callback(undefined);
+        return;
+      }
+      const text = line.translateToString(true);
+      const found: ILink[] = [];
+      for (const match of text.matchAll(TEXT_LINK_RE)) {
+        const start = (match.index ?? 0) + 1;
+        const value = match[0];
+        found.push({
+          range: { start: { x: start, y }, end: { x: start + value.length - 1, y } },
+          text: value,
+          activate: (event: MouseEvent) => {
+            if (!event.ctrlKey && !event.metaKey) return;
+            if (event.shiftKey) void copyText(pathWithCwd(tab.id, value));
+            else openTextLink(tab.id, value);
+          },
+        });
+      }
+      callback(found.length > 0 ? found : undefined);
+    },
+  });
+
+  // Paste guard: a multi-line paste into a TUI agent submits line by line,
+  // and pasting into an approval prompt can approve something unread. Both
+  // are worth one confirm; a plain single-line paste is untouched.
+  surface.addEventListener(
+    "paste",
+    (e) => {
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      if (!text) return;
+      const blocked = agentStates.stateOf(tab.id, Date.now()) === "blocked";
+      if (blocked) {
+        if (!window.confirm("This tab is waiting for an approval. Paste into it anyway?")) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        return;
+      }
+      const multiline = /[\r\n]/.test(text.trim());
+      if (multiline && !term.modes.bracketedPasteMode) {
+        const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0).length;
+        if (!window.confirm(`Paste ${lines} lines? Each line may run on its own.`)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
+    },
+    true,
+  );
+
   // Bell: no-op, a brief visual flash, an audible beep, or both.
   term.onBell(() => {
     const { visual, audible } = bellAction(cfg.bell);
@@ -862,6 +931,8 @@ function observeOsc(sessionId: string, tab: Tab, data: Uint8Array): void {
       const cmd = ev.cmd || st.input.trim() || currentInputLine(tabNow.id);
       commandTracker.onCmdStart(tabNow.id, cmd);
       reportDebugStage("cmd-start", { tab: tabNow.id, cmd });
+      // A new command owns no old progress.
+      if (tabProgress.delete(tabNow.id)) changed = true;
       // A new command means the previous completion is handled — unless the
       // tab is owned by an agent. There the mark belongs to the agent and only
       // a reply (`muis-notify --running`) or closing the tab may drop it: the
@@ -876,7 +947,21 @@ function observeOsc(sessionId: string, tab: Tab, data: Uint8Array): void {
       }
       renderCommandHead(tabNow.id);
     } else if (ev.type === "cmd-end") {
+      if (tabProgress.delete(tabNow.id)) changed = true;
       finishCommand(tabNow.id, ev.exit);
+    } else if (ev.type === "progress") {
+      // OSC 9;4, emitted by long builds and by agents that report progress.
+      if (ev.state === 0) {
+        tabProgress.delete(tabNow.id);
+      } else {
+        tabProgress.set(tabNow.id, { state: ev.state, percent: ev.percent });
+      }
+      changed = true;
+    } else if (ev.type === "agent-state") {
+      // OSC 777 fallback for agents that cannot run `muis-agent`.
+      if (isAgentState(ev.state) && applyAgentState(tabNow, ev.state, null, null, null)) {
+        changed = true;
+      }
     } else if (ev.type === "notify") {
       // Terminal agents report completion with OSC 9/777/99 (or the
       // muis-notify CLI). Badge the tab when the user was not looking at
@@ -1436,11 +1521,16 @@ function sessionElement(w: Workspace, selected: boolean, col: string): HTMLEleme
     w.tabs.map((t) => tabAttention(t.id)),
     selected,
   );
+  // Any blocked agent in the session turns its dot red: that is the session
+  // actually waiting on the user, not just finished work.
+  const blocked = w.tabs.some((t) => agentStates.stateOf(t.id, Date.now()) === "blocked");
   if (attention.count > 0) {
     d.append(el("span", "s-badge", String(attention.count)));
-    d.append(el("div", "s-dot notify unseen"));
+    d.append(el("div", "s-dot notify unseen" + (blocked ? " blocked" : "")));
   } else if (attention.dot) {
-    d.append(el("div", "s-dot notify"));
+    d.append(el("div", "s-dot notify" + (blocked ? " blocked" : "")));
+  } else if (blocked) {
+    d.append(el("div", "s-dot notify blocked"));
   }
   d.addEventListener("click", () => {
     store.switch(idx);
@@ -1529,9 +1619,35 @@ function tabElement(ws: Workspace, tab: Tab, selected: boolean): HTMLElement {
   // A pending completion reads "waiting" — it wants the user. It blinks
   // until the tab is looked at, then stays lit (green, no animation) until
   // the agent resumes or the tab closes. Only a dead pty reads "done".
+  //
+  // The agent's own report wins over the completion heuristic: it can say
+  // *why* the tab is waiting (blocked vs finished), which output never can.
+  const agentState = agentStates.stateOf(tab.id, Date.now());
+  const dead = activity.exited.has(tab.id);
   const attention = tabAttention(tab.id);
-  const chip = tabAttentionLabel(attention, activity.exited.has(tab.id));
-  if (chip) d.append(el("span", "t-state" + (attention === "unseen" ? " unseen" : ""), chip));
+  const chip = dead
+    ? tabAttentionLabel(attention, true)
+    : stateChip(agentState) ?? tabAttentionLabel(attention, false);
+  if (chip) {
+    const cls =
+      "t-state" +
+      (agentState === "blocked" ? " blocked" : attention === "unseen" ? " unseen" : "");
+    d.append(el("span", cls, chip));
+  }
+  const agentText = agentLabel(agentStates.get(tab.id));
+  if (agentText) {
+    d.title = dead ? `${agentText} — exited` : `${agentText} — ${agentState ?? "unknown"}`;
+  }
+  if (agentState === "blocked") d.classList.add("blocked");
+  // OSC 9;4 progress: a thin bar along the bottom edge. `state 2` is an
+  // error, and a null percentage is indeterminate (no width, pulsing).
+  const progress = tabProgress.get(tab.id);
+  if (progress) {
+    const bar = el("span", "t-progress" + (progress.state === 2 ? " error" : ""));
+    if (progress.percent === null) bar.classList.add("indeterminate");
+    else bar.style.width = `${progress.percent}%`;
+    d.append(bar);
+  }
   const x = el("span", "x", "✕");
   x.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1595,10 +1711,12 @@ function renderTerms(ws: Workspace | undefined): void {
 
 const stCwd = el("span", "", "");
 const stGit = el("span", "pill", "");
+/** Which agent is running in the active tab, from its own reports. */
+const stAgent = el("span", "", "");
 const stClock = el("span", "clock", "");
 // Context on the left, clock on the far right.
-statusbar.append(stCwd, stGit, el("span", ""), stClock);
-(statusbar.children[2] as HTMLElement).style.marginLeft = "auto";
+statusbar.append(stCwd, stGit, stAgent, el("span", ""), stClock);
+(statusbar.children[3] as HTMLElement).style.marginLeft = "auto";
 
 const gitCache = new Map<string, string>();
 
@@ -1623,6 +1741,14 @@ function renderStatusbar(): void {
   } else {
     stGit.textContent = "";
   }
+  // The active tab's agent: name, model and what it is doing. Empty for a
+  // plain shell tab, so the statusbar does not invent an agent.
+  const report = tab ? agentStates.get(tab.id) : undefined;
+  const label = agentLabel(report);
+  const state = tab ? agentStates.stateOf(tab.id, Date.now()) : null;
+  stAgent.textContent = label
+    ? `${label}${state && state !== "idle" ? ` · ${state}` : ""}`
+    : "";
   applyStatusbarVisibility();
 }
 
@@ -1631,6 +1757,7 @@ function applyStatusbarVisibility(): void {
   const segs: [string, HTMLElement][] = [
     ["cwd", stCwd],
     ["git", stGit],
+    ["agent", stAgent],
     ["clock", stClock],
   ];
   for (const [id, node] of segs) {
@@ -1642,6 +1769,14 @@ function tickClock(): void {
   const f = () => {
     const text = clockText(new Date());
     if (stClock.textContent !== text) stClock.textContent = text;
+    // A silent agent must stop looking busy. Only re-render when something
+    // actually expired, so a quiet window stays quiet.
+    if (agentStates.expireWorking(Date.now())) {
+      renderTabs();
+      renderSessions();
+      renderStatusbar();
+      updateWindowTitle();
+    }
   };
   f();
   setInterval(f, 1000);
@@ -1932,8 +2067,38 @@ const onShortcut = (e: KeyboardEvent): void => {
       e.preventDefault();
       focusPreview();
       break;
+    case "inbox":
+      e.preventDefault();
+      if (inboxOverlay.style.display === "none") openInbox();
+      else closeInbox();
+      break;
+    case "next-waiting":
+      e.preventDefault();
+      jumpToNextWaiting();
+      break;
+    case "zoom-in":
+      e.preventDefault();
+      zoomTerminal(1);
+      break;
+    case "zoom-out":
+      e.preventDefault();
+      zoomTerminal(-1);
+      break;
+    case "zoom-reset":
+      e.preventDefault();
+      resetZoom();
+      break;
+    case "scale-up":
+      e.preventDefault();
+      scaleWindow(0.1);
+      break;
+    case "scale-down":
+      e.preventDefault();
+      scaleWindow(-0.1);
+      break;
     case "close-overlay":
-      if (sessionOverlay.style.display !== "none") closeSessionDialog();
+      if (inboxOverlay.style.display !== "none") closeInbox();
+      else if (sessionOverlay.style.display !== "none") closeSessionDialog();
       else if (settingsOverlay.style.display !== "none") closeSettings();
       break;
   }
@@ -2035,6 +2200,7 @@ for (const s of ["none", "visual", "audible", "both"]) {
 const SEGMENTS: [string, string][] = [
   ["cwd", "cwd"],
   ["git", "git"],
+  ["agent", "agent"],
   ["clock", "clock"],
 ];
 const segBox = document.createElement("div");
@@ -2232,6 +2398,10 @@ function openPalette(): void {
     add("close-session", "Close session", () => closeSession(ws));
   }
   add("settings", "Open settings", () => openSettings());
+  add("inbox", "Needs you…", () => openInbox());
+  add("zoom-in", "Zoom in", () => zoomTerminal(1));
+  add("zoom-out", "Zoom out", () => zoomTerminal(-1));
+  add("zoom-reset", "Reset zoom", () => resetZoom());
   add("toggle-preview", previewOpen ? "Hide browser pane" : "Show browser pane", () =>
     togglePreview(),
   );
@@ -2326,10 +2496,242 @@ function installDebugHook(): void {
   }
 }
 
+/* ---------------- needs-you inbox ---------------- */
+
+const inboxOverlay = document.createElement("div");
+inboxOverlay.className = "palette-overlay";
+inboxOverlay.style.display = "none";
+const inboxBox = document.createElement("div");
+inboxBox.className = "palette-box inbox-box";
+inboxBox.tabIndex = -1;
+const inboxHead = el("div", "inbox-head", "Needs you");
+const inboxList = document.createElement("div");
+inboxList.className = "palette-list";
+inboxBox.append(inboxHead, inboxList);
+inboxOverlay.append(inboxBox);
+document.body.append(inboxOverlay);
+
+interface WaitingEntry {
+  wsIndex: number;
+  tabIndex: number;
+  tab: Tab;
+  state: "blocked" | "done";
+  at: number;
+}
+
+/** Every tab the agents say needs the user, blocked first then oldest. */
+function waitingEntries(): WaitingEntry[] {
+  const out: WaitingEntry[] = [];
+  for (const w of agentStates.waiting(Date.now())) {
+    store.workspaces.forEach((ws, wsIndex) => {
+      const tabIndex = ws.tabs.findIndex((t) => t.id === w.tabId);
+      if (tabIndex >= 0) {
+        out.push({ wsIndex, tabIndex, tab: ws.tabs[tabIndex], state: w.state, at: w.at });
+      }
+    });
+  }
+  return out;
+}
+
+/** Coarse age for the queue: 12s, 4m, 2h. */
+function ageText(at: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.round(minutes / 60)}h`;
+}
+
+let inboxIndex = 0;
+
+function renderInbox(): void {
+  const entries = waitingEntries();
+  inboxIndex = clampIndex(inboxIndex, entries.length);
+  inboxList.innerHTML = "";
+  if (entries.length === 0) {
+    inboxList.append(el("div", "palette-item dim", "Nothing waiting on you"));
+    return;
+  }
+  entries.forEach((entry, i) => {
+    const row = el("div", "palette-item inbox-item" + (i === inboxIndex ? " on" : ""));
+    const agent = agentLabel(agentStates.get(entry.tab.id)) ?? "agent";
+    const where = store.workspaces[entry.wsIndex]?.name ?? "";
+    row.append(
+      el("span", `inbox-dot ${entry.state}`),
+      el("span", "inbox-name", tabLabel(entry.tab)),
+      el("span", "inbox-where", `${where} · ${agent}`),
+      el("span", "inbox-age", ageText(entry.at)),
+    );
+    row.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      jumpToWaiting(i);
+    });
+    inboxList.append(row);
+  });
+}
+
+function openInbox(): void {
+  inboxIndex = 0;
+  inboxOverlay.style.display = "flex";
+  renderInbox();
+  inboxBox.focus();
+}
+
+function closeInbox(): void {
+  inboxOverlay.style.display = "none";
+}
+
+/**
+ * Go to one waiting tab. Looking at it demotes a fresh alert to `seen`, so
+ * the count stops pulsing but the tab keeps its mark until the agent resumes.
+ */
+function jumpToWaiting(index: number): void {
+  const entry = waitingEntries()[index];
+  closeInbox();
+  if (!entry) return;
+  store.current = entry.wsIndex;
+  const ws = store.workspaces[entry.wsIndex];
+  ws.active = entry.tabIndex;
+  doneTabs.see(entry.tab.id);
+  renderAll();
+  focusActiveTerminalOnSelect();
+}
+
+/** Cycle to the next waiting tab without opening the queue. */
+function jumpToNextWaiting(): void {
+  const entries = waitingEntries();
+  if (entries.length === 0) return;
+  const ws = store.currentWorkspace();
+  const currentId = ws?.tabs[ws.active]?.id;
+  const at = entries.findIndex((e) => e.tab.id === currentId);
+  jumpToWaiting((at + 1) % entries.length);
+}
+
+inboxBox.addEventListener("keydown", (e) => {
+  const count = waitingEntries().length;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeInbox();
+  } else if (e.key === "ArrowDown" && count > 0) {
+    e.preventDefault();
+    inboxIndex = (inboxIndex + 1) % count;
+    renderInbox();
+  } else if (e.key === "ArrowUp" && count > 0) {
+    e.preventDefault();
+    inboxIndex = (inboxIndex - 1 + count) % count;
+    renderInbox();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    jumpToWaiting(inboxIndex);
+  }
+});
+
+/* ---------------- zoom ---------------- */
+
+/** Whole-window scale; 1 is 100%. Terminal font zoom lives in AppConfig. */
+let uiScale = 1;
+
+function persistConfig(): void {
+  if (!BACKEND || testModeActive) return;
+  void shellCall("config_save", { json: JSON.stringify(cfg) }).catch(() => {});
+}
+
+/** Re-apply the terminal font size to every live surface and re-fit. */
+function applyFontZoom(): void {
+  const px = effectiveFontSize(cfg);
+  for (const [, view] of views) {
+    view.term.options.fontSize = px;
+    view.fit.fit();
+  }
+  renderStatusbar();
+}
+
+function zoomTerminal(delta: number): void {
+  const current = effectiveFontSize(cfg);
+  const next = Math.max(6, Math.min(32, Math.round(current + delta)));
+  cfg = { ...cfg, fontSize: next };
+  applyFontZoom();
+  persistConfig();
+}
+
+/** Ctrl+0 returns to the system default size, not to some remembered one. */
+function resetZoom(): void {
+  cfg = { ...cfg, fontSize: null };
+  applyFontZoom();
+  persistConfig();
+}
+
+/**
+ * Scale the whole window (chrome included) for reading from a distance.
+ * CSS zoom keeps the layout honest; the fit addon re-measures the terminal.
+ */
+function scaleWindow(delta: number): void {
+  const next = Math.max(0.75, Math.min(2, Math.round((uiScale + delta) * 10) / 10));
+  if (next === uiScale) return;
+  uiScale = next;
+  document.documentElement.style.setProperty("zoom", String(uiScale));
+  for (const [, view] of views) view.fit.fit();
+}
+
+/* ---------------- links ---------------- */
+
+/** Conservative: a greedy matcher that lights up half the screen is worse
+ * than none. URLs, plus paths that look like source files with line refs. */
+const TEXT_LINK_RE =
+  /\bhttps?:\/\/[^\s"'<>()\]]+|\b[\w@./-]+\.(?:ts|tsx|js|jsx|json|md|rs|toml|css|html|sh|py|go|ya?ml)(?::\d+){0,2}\b/g;
+
+/** Copy through the async API, falling back to a hidden textarea. */
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    /* fall through: WebKit may deny the async clipboard */
+  }
+  const holder = document.createElement("textarea");
+  holder.value = text;
+  holder.style.position = "fixed";
+  holder.style.opacity = "0";
+  document.body.append(holder);
+  holder.select();
+  try {
+    document.execCommand("copy");
+  } catch {
+    /* nothing else to try */
+  }
+  holder.remove();
+}
+
+/**
+ * Ctrl+click a detected link: URLs go to the preview pane (or the system
+ * browser), paths are copied with their line reference. Shift+ctrl-click
+ * always copies. Nothing is ever executed.
+ */
+function openTextLink(tabId: string, text: string): void {
+  if (/^https?:\/\//.test(text)) {
+    if (BACKEND) void shellCall("open_url", { url: text }).catch(() => {});
+    else window.open(text, "_blank", "noopener");
+    return;
+  }
+  void copyText(pathWithCwd(tabId, text));
+}
+
+/** Resolve a bare `src/foo.ts:12` against the tab's cwd for the clipboard. */
+function pathWithCwd(tabId: string, text: string): string {
+  const tab = store.workspaces.flatMap((w) => w.tabs).find((t) => t.id === tabId);
+  if (!tab || text.startsWith("/") || text.startsWith("~")) return text;
+  const base = tab.cwd.replace(/\/+$/, "");
+  return base ? `${base}/${text}` : text;
+}
+
 /* ---------------- last-command bar ---------------- */
 
 const commandTracker = new CommandTracker();
 const doneTabs = new DoneTracker();
+/** What each agent says it is doing (D04); the chrome reads this first. */
+const agentStates = new AgentStateTracker();
+/** OSC 9;4 progress per tab, in percent (null = indeterminate). */
+const tabProgress = new Map<string, { state: number; percent: number | null }>();
 const notifyRouter = new NotifyRouter();
 const idleFallback = new Map<string, number>();
 
@@ -2474,6 +2876,8 @@ function maybeNotifyFinished(tabId: string): void {
 function forgetTabState(tabId: string): void {
   commandTracker.forget(tabId);
   doneTabs.forget(tabId);
+  agentStates.forget(tabId);
+  tabProgress.delete(tabId);
   restoreCommands.delete(tabId);
   notifyRouter.forget(tabId);
   window.clearTimeout(idleFallback.get(tabId));
@@ -2541,6 +2945,51 @@ function clearAgentSession(tabId: string): void {
   if (applyAgentReport(store.workspaces, tabId, null, null) !== "ignored") {
     scheduleSave();
   }
+}
+
+/**
+ * A `muis-agent report`: the agent says what it is doing. This is the only
+ * source of `blocked` — a state no amount of output inspection can infer —
+ * and `working` clears a waiting mark, because the agent picked the work
+ * back up without the user typing.
+ */
+function handleAgentState(report: CliAgentState): void {
+  if (!isAgentState(report.state)) return;
+  const tab = tabForReport(store.workspaces, report.tab_id, report.session);
+  if (!tab) return;
+  applyAgentState(tab, report.state, report.agent ?? null, report.model ?? null, report.session ?? null);
+  reportDebugStage("agent-state", { tab: tab.id, state: report.state });
+  renderTabs();
+  renderSessions();
+  renderStatusbar();
+  updateWindowTitle();
+}
+
+/**
+ * Record one report against a tab. Returns true when the chrome changed.
+ * Split out from the event handler so the OSC 777 fallback takes the same
+ * path as the CLI hook.
+ */
+function applyAgentState(
+  tab: Tab,
+  state: AgentState,
+  agent: string | null,
+  model: string | null,
+  session: string | null,
+): boolean {
+  agentStates.report(tab.id, { state, agent, model, session, at: Date.now() });
+  if (state === "working") {
+    if (!doneTabs.has(tab.id)) return false;
+    doneTabs.clear(tab.id);
+    reportDebugStage("attention-cleared", { tab: tab.id, reason: "agent-working" });
+    return true;
+  }
+  if (state === "blocked" || state === "done") {
+    // Looking at the tab is not answering it, so a visible tab gets a steady
+    // mark and a hidden one pulses, exactly like a finished command.
+    doneTabs.mark(tab.id, isTabVisible(tab.id) ? "seen" : "unseen");
+  }
+  return true;
 }
 
 /** A `muis-notify` request forwarded by the shell, routed to its tab. */

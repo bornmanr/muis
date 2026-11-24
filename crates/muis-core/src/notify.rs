@@ -20,8 +20,37 @@ use serde::{Deserialize, Serialize};
 
 pub const AGENT_KIND: &str = "agent-session";
 pub const ACTIVITY_KIND: &str = "agent-activity";
+pub const STATE_KIND: &str = "agent-state";
 pub const OPEN_KIND: &str = "open-url";
 pub const ACTIVITY_RUNNING: &str = "running";
+
+/// The only lifecycle states an agent may report. A closed set keeps the
+/// chrome from inventing a state it cannot label; unknown values are
+/// rejected by the CLI and ignored on the wire.
+pub const AGENT_STATES: [&str; 4] = ["working", "blocked", "done", "idle"];
+
+/// True for one of [`AGENT_STATES`].
+pub fn valid_agent_state(state: &str) -> bool {
+    AGENT_STATES.contains(&state)
+}
+
+/// Trim, drop control characters and cap a display label. Agent and model
+/// names are rendered in tab tooltips, so they never get to carry newlines
+/// or an unbounded string into the UI.
+fn clean_label(value: Option<String>) -> Option<String> {
+    let raw = value?;
+    let cleaned: String = raw
+        .trim()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(64)
+        .collect();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
 
 /// One notification request from a client.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,12 +157,64 @@ impl OpenUrlRequest {
     }
 }
 
+/// What an agent in a tab reports about its own lifecycle.
+///
+/// Distinct from [`ActivityRequest`]: activity is the coarse "the user
+/// replied, the agent picked the work back up" signal derived from input,
+/// while this is the agent saying what it is doing. `blocked` is the state
+/// that matters — it is the only one that needs the user right now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentStateRequest {
+    pub kind: String,
+    /// One of [`AGENT_STATES`].
+    pub state: String,
+    /// Originating tab, injected into ptys as `MUIS_TAB_ID`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+    /// opencode session this state belongs to, routed like
+    /// `NotifyRequest::session`: the server plugin shares one opencode
+    /// process across tabs, so the session id is the reliable route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    /// Agent name, e.g. `opencode`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// Model id when the agent exposes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+impl AgentStateRequest {
+    /// Build a request, or `None` for an unknown state. Labels are cleaned
+    /// here so every caller gets the same guarantee.
+    pub fn new(
+        state: &str,
+        tab_id: Option<String>,
+        session: Option<String>,
+        agent: Option<String>,
+        model: Option<String>,
+    ) -> Option<Self> {
+        if !valid_agent_state(state) {
+            return None;
+        }
+        Some(Self {
+            kind: STATE_KIND.to_string(),
+            state: state.to_string(),
+            tab_id,
+            session,
+            agent: clean_label(agent),
+            model: clean_label(model),
+        })
+    }
+}
+
 /// Every request a local client may send.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientRequest {
     Notify(NotifyRequest),
     AgentSession(AgentSessionRequest),
     AgentActivity(ActivityRequest),
+    AgentState(AgentStateRequest),
     OpenUrl(OpenUrlRequest),
 }
 
@@ -211,10 +292,15 @@ pub fn decode_client(line: &str) -> Option<ClientRequest> {
         Some(ACTIVITY_KIND) => serde_json::from_value(value)
             .ok()
             .map(ClientRequest::AgentActivity),
+        Some(STATE_KIND) => serde_json::from_value(value)
+            .ok()
+            .map(ClientRequest::AgentState),
         Some(OPEN_KIND) => serde_json::from_value(value)
             .ok()
             .map(ClientRequest::OpenUrl),
-        _ => serde_json::from_value(value).ok().map(ClientRequest::Notify),
+        _ => serde_json::from_value(value)
+            .ok()
+            .map(ClientRequest::Notify),
     }
 }
 
@@ -238,6 +324,11 @@ pub fn send_agent(socket: &str, req: &AgentSessionRequest) -> io::Result<()> {
 
 /// Send one agent-activity report to a running muis.
 pub fn send_activity(socket: &str, req: &ActivityRequest) -> io::Result<()> {
+    send_value(socket, &serde_json::to_value(req)?)
+}
+
+/// Send one agent lifecycle report to a running muis.
+pub fn send_agent_state(socket: &str, req: &AgentStateRequest) -> io::Result<()> {
     send_value(socket, &serde_json::to_value(req)?)
 }
 
@@ -421,10 +512,9 @@ mod tests {
     fn a_notification_may_carry_a_session_route() {
         // The opencode server plugin cannot trust MUIS_TAB_ID, so the session
         // travels with the notification and must survive the wire.
-        let req: NotifyRequest = serde_json::from_str(
-            r#"{"body":"done","tab_id":"t9","session":"ses_routed"}"#,
-        )
-        .unwrap();
+        let req: NotifyRequest =
+            serde_json::from_str(r#"{"body":"done","tab_id":"t9","session":"ses_routed"}"#)
+                .unwrap();
         assert_eq!(req.session.as_deref(), Some("ses_routed"));
         assert_eq!(
             decode_client(&serde_json::to_string(&req).unwrap()),
@@ -449,5 +539,64 @@ mod tests {
             decode_client(r#"{"kind":"agent-activity","state":"running"}"#),
             Some(ClientRequest::AgentActivity(bare))
         );
+    }
+
+    #[test]
+    fn agent_state_roundtrips_and_routes_by_kind() {
+        let req = AgentStateRequest::new(
+            "blocked",
+            Some("t1".into()),
+            Some("ses_abc".into()),
+            Some("opencode".into()),
+            Some("opus".into()),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("agent-state"));
+        assert_eq!(
+            decode_client(&json),
+            Some(ClientRequest::AgentState(req.clone()))
+        );
+
+        // Only the state is required; routing and labels are optional.
+        let bare = AgentStateRequest::new("done", None, None, None, None).unwrap();
+        assert_eq!(
+            decode_client(r#"{"kind":"agent-state","state":"done"}"#),
+            Some(ClientRequest::AgentState(bare))
+        );
+    }
+
+    #[test]
+    fn agent_state_rejects_unknown_states() {
+        for bad in ["", "running", "waiting", "DONE", "done\n"] {
+            assert!(
+                AgentStateRequest::new(bad, None, None, None, None).is_none(),
+                "{bad:?} must not be a reportable state"
+            );
+        }
+        for good in AGENT_STATES {
+            assert!(valid_agent_state(good));
+            assert!(AgentStateRequest::new(good, None, None, None, None).is_some());
+        }
+    }
+
+    #[test]
+    fn agent_state_labels_are_cleaned() {
+        // Tooltips render these, so control characters and unbounded length
+        // must not make it through the constructor.
+        let req = AgentStateRequest::new(
+            "working",
+            None,
+            None,
+            Some("  open\ncode  ".into()),
+            Some("x".repeat(200)),
+        )
+        .unwrap();
+        assert_eq!(req.agent.as_deref(), Some("opencode"));
+        assert_eq!(req.model.as_deref(), Some("x".repeat(64).as_str()));
+
+        let blank =
+            AgentStateRequest::new("working", None, None, Some("   ".into()), None).unwrap();
+        assert_eq!(blank.agent, None);
     }
 }
