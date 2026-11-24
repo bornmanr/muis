@@ -1,0 +1,310 @@
+//! Worker pool: one `muis-worker` process per session.
+//!
+//! Extracted from the Tauri shell so the pool is testable and reusable
+//! outside the window. There is still exactly one worker per session and the
+//! caller decides what the events mean; this crate never interprets terminal
+//! state.
+//!
+//! The shell injects the environment every pty inherits (`MUIS_SOCKET`, and
+//! the `MUIS_AGENT_BIN` sidecar hint), so nothing here knows about sockets or
+//! packaging.
+
+use muis_core::ipc::{decode_worker, WorkerToUi};
+use serde::Serialize;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::{Arc, Mutex};
+
+/// Frontend event name for everything arriving from any worker.
+pub const WORKER_EVENT: &str = "muis-worker-event";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionEvent {
+    pub session_id: String,
+    pub frame: WorkerToUi,
+}
+
+/// Delivers a worker event to the frontend. Returns `false` when the
+/// destination is gone, which stops the pump thread.
+pub type EventSink = Arc<dyn Fn(SessionEvent) -> bool + Send + Sync + 'static>;
+
+/// What every worker passes on to its ptys.
+#[derive(Clone, Debug, Default)]
+pub struct WorkerEnv {
+    /// Notification socket the ptys report to (`MUIS_SOCKET`).
+    pub socket: Option<String>,
+    /// Path to the sibling `muis-agent` binary (`MUIS_AGENT_BIN`).
+    pub agent_bin: Option<PathBuf>,
+}
+
+/// Pure parse step: worker stdout line -> frontend event payload.
+pub fn parse_worker_line(session_id: &str, line: &str) -> Result<SessionEvent, String> {
+    decode_worker(line)
+        .map(|frame| SessionEvent {
+            session_id: session_id.to_string(),
+            frame,
+        })
+        .map_err(|e| e.to_string())
+}
+
+struct Running {
+    stdin: Mutex<ChildStdin>,
+    child: Mutex<Child>,
+}
+
+/// Path to the `muis-worker` executable that serves each session. A worker
+/// is always its own process, one per session.
+#[derive(Clone, Debug)]
+pub struct WorkerLaunch(pub PathBuf);
+
+pub struct WorkerPool {
+    sink: EventSink,
+    workers: Mutex<HashMap<String, Arc<Running>>>,
+    launch: Option<WorkerLaunch>,
+    env: WorkerEnv,
+}
+
+impl WorkerPool {
+    pub fn new(sink: EventSink, launch: Option<WorkerLaunch>, env: WorkerEnv) -> Self {
+        Self {
+            sink,
+            workers: Mutex::new(HashMap::new()),
+            launch,
+            env,
+        }
+    }
+
+    fn dead_worker_event(session_id: &str) -> SessionEvent {
+        SessionEvent {
+            session_id: session_id.to_string(),
+            frame: WorkerToUi::Error {
+                pty_id: String::new(),
+                message: "worker process ended".to_string(),
+            },
+        }
+    }
+
+    /// Start the worker for a session. Idempotent: already running is Ok.
+    pub fn spawn_session(&self, session_id: &str) -> Result<(), String> {
+        if self.workers.lock().unwrap().contains_key(session_id) {
+            return Ok(());
+        }
+        let launch = self.launch.clone().ok_or_else(|| {
+            log::error!("spawn requested but no muis-worker is available");
+            "muis-worker not found next to the muis binary".to_string()
+        })?;
+
+        let mut command = Command::new(&launch.0);
+        log::info!(
+            "starting worker for session {session_id}: {}",
+            launch.0.display()
+        );
+        if let Some(socket) = &self.env.socket {
+            // The worker forwards this to each pty so `muis-notify` can find
+            // the shell's notification socket.
+            command.env("MUIS_SOCKET", socket);
+        }
+        if let Some(agent) = &self.env.agent_bin {
+            // A dev/tarball run may not have the helper on PATH; point the
+            // agent plugin at the sibling binary explicitly.
+            command.env("MUIS_AGENT_BIN", agent);
+        }
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            // Captured (not null) so worker panics land in the log instead of
+            // vanishing; the worker speaks JSON on stdout, so stderr is free.
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().map_err(|e| {
+            log::error!("failed to start worker ({}): {e}", launch.0.display());
+            format!("failed to start muis-worker: {e}")
+        })?;
+        let stdin = child.stdin.take().ok_or("worker stdin unavailable")?;
+        let stdout = child.stdout.take().ok_or("worker stdout unavailable")?;
+
+        if let Some(stderr) = child.stderr.take() {
+            let id = session_id.to_string();
+            std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    log::warn!("muis-worker[{id}] {line}");
+                }
+            });
+        }
+
+        let running = Arc::new(Running {
+            stdin: Mutex::new(stdin),
+            child: Mutex::new(child),
+        });
+        self.workers
+            .lock()
+            .unwrap()
+            .insert(session_id.to_string(), Arc::clone(&running));
+
+        // Pump worker stdout -> frontend events until EOF, then report the
+        // death so the UI can offer reconnect. EOF without Exited frames
+        // means the worker crashed (see the per-session-process design).
+        let sink = Arc::clone(&self.sink);
+        let id = session_id.to_string();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                match parse_worker_line(&id, &line) {
+                    Ok(event) => {
+                        if !sink(event) {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        log::debug!("muis-worker[{id}] undecodable frame: {e}");
+                        continue;
+                    }
+                }
+            }
+            log::warn!("muis-worker for session {id} ended");
+            let _ = sink(Self::dead_worker_event(&id));
+        });
+        Ok(())
+    }
+
+    /// Forward one UiToWorker JSON line to the session's worker.
+    pub fn send_line(&self, session_id: &str, line: &str) -> Result<(), String> {
+        let workers = self.workers.lock().unwrap();
+        let running = workers
+            .get(session_id)
+            .ok_or_else(|| format!("no worker for session {session_id}"))?;
+        let mut stdin = running.stdin.lock().unwrap();
+        stdin
+            .write_all(line.as_bytes())
+            .map_err(|e| format!("worker write failed: {e}"))?;
+        if !line.ends_with('\n') {
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("worker write failed: {e}"))?;
+        }
+        stdin
+            .flush()
+            .map_err(|e| format!("worker write failed: {e}"))?;
+        Ok(())
+    }
+
+    /// Kill the session's worker and forget it. Next spawn starts fresh.
+    pub fn stop_session(&self, session_id: &str) {
+        if let Some(running) = self.workers.lock().unwrap().remove(session_id) {
+            if let Ok(mut child) = running.child.lock() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_worker_line_tags_session() {
+        let e = parse_worker_line("s1", r#"{"type":"exited","pty_id":"t2","code":42}"#).unwrap();
+        assert_eq!(e.session_id, "s1");
+        assert_eq!(
+            e.frame,
+            WorkerToUi::Exited {
+                pty_id: "t2".into(),
+                code: Some(42),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_worker_line_rejects_garbage() {
+        assert!(parse_worker_line("s1", "not json").is_err());
+        assert!(parse_worker_line("s1", r#"{"type":"nope"}"#).is_err());
+    }
+
+    #[test]
+    fn session_event_serializes_for_the_frontend() {
+        let e = SessionEvent {
+            session_id: "s1".into(),
+            frame: WorkerToUi::Spawned {
+                pty_id: "t1".into(),
+            },
+        };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["session_id"], "s1");
+        assert_eq!(v["frame"]["type"], "spawned");
+    }
+
+    /// One worker process per session, spawn is idempotent, and stopping
+    /// one session leaves the others running. Uses a fake worker script
+    /// that answers every input line with a `spawned` frame, so the pool
+    /// is exercised without a Tauri runtime or a real pty.
+    #[cfg(unix)]
+    #[test]
+    fn one_worker_per_session_and_stop_is_isolated() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+
+        let dir = std::env::temp_dir().join(format!("muis-pool-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let worker = dir.join("fake-worker.sh");
+        std::fs::write(
+            &worker,
+            "#!/bin/sh\nwhile IFS= read -r _line; do printf '{\"type\":\"spawned\",\"pty_id\":\"p1\"}\\n'; done\n",
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&worker).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&worker, perms).unwrap();
+
+        let (tx, rx) = channel::<SessionEvent>();
+        let sink: EventSink = Arc::new(move |event| tx.send(event).is_ok());
+        let pool = WorkerPool::new(sink, Some(WorkerLaunch(worker)), WorkerEnv::default());
+
+        // Two sessions, one double-spawn to prove idempotency.
+        pool.spawn_session("s1").unwrap();
+        pool.spawn_session("s1").unwrap();
+        pool.spawn_session("s2").unwrap();
+
+        let write = r#"{"type":"write","pty_id":"p1","data":""}"#;
+        pool.send_line("s1", write).unwrap();
+        pool.send_line("s2", write).unwrap();
+
+        // Exactly one `spawned` frame per session, not two for s1.
+        let mut spawned: HashMap<String, usize> = HashMap::new();
+        while spawned.values().sum::<usize>() < 2 {
+            let event = rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("worker event");
+            if matches!(event.frame, WorkerToUi::Spawned { .. }) {
+                *spawned.entry(event.session_id).or_insert(0) += 1;
+            }
+        }
+        assert_eq!(spawned.get("s1"), Some(&1));
+        assert_eq!(spawned.get("s2"), Some(&1));
+
+        // Stopping s1 kills only its worker; s2 keeps answering.
+        pool.stop_session("s1");
+        assert!(pool.send_line("s1", write).is_err());
+        pool.send_line("s2", write).unwrap();
+        let mut s2_alive = false;
+        while !s2_alive {
+            let event = rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("s2 still alive");
+            if event.session_id == "s2" && matches!(event.frame, WorkerToUi::Spawned { .. }) {
+                s2_alive = true;
+            }
+        }
+
+        pool.stop_session("s2");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

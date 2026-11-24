@@ -1,0 +1,17 @@
+[package]
+name = "muis-daemon"
+version = "0.1.0"
+edition = "2021"
+description = "Worker pool shared by the muis hosts; foundation for the session daemon"
+
+[lib]
+name = "muis_daemon"
+path = "src/lib.rs"
+
+[dependencies]
+muis-core = { path = "../muis-core" }
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
+
+[dev-dependencies]
+serde_json = "1"

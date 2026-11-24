@@ -2216,6 +2216,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "muis-daemon"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "muis-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "muis-notify"
 version = "0.1.0"
 dependencies = [
@@ -2247,6 +2257,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "muis-core",
+ "muis-daemon",
  "notify-rust",
  "serde",
  "serde_json",
