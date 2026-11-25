@@ -28,18 +28,22 @@ mod imp {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    const USAGE: &str = "usage: muis-daemon [--socket PATH] [--worker PATH] [--idle-seconds N]";
+    const USAGE: &str = "usage: muis-daemon [--socket PATH] [--worker PATH] [--idle-seconds N]\n                     [--history-dir PATH] [--history-bytes N]";
 
     struct Args {
         socket: PathBuf,
         worker: PathBuf,
         idle: u64,
+        history_dir: PathBuf,
+        history_cap: u64,
     }
 
     fn parse_args() -> Result<Args, String> {
         let mut socket = None;
         let mut worker = None;
         let mut idle = 900u64;
+        let mut history_dir = None;
+        let mut history_cap = muis_daemon::history::DEFAULT_CAP;
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
             let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -50,6 +54,12 @@ mod imp {
                     idle = value()?
                         .parse()
                         .map_err(|_| "--idle-seconds needs a number")?
+                }
+                "--history-dir" => history_dir = Some(PathBuf::from(value()?)),
+                "--history-bytes" => {
+                    history_cap = value()?
+                        .parse()
+                        .map_err(|_| "--history-bytes needs a number")?
                 }
                 "-h" | "--help" => {
                     println!("{USAGE}");
@@ -71,6 +81,9 @@ mod imp {
             socket,
             worker,
             idle,
+            history_dir: history_dir
+                .unwrap_or_else(|| muis_core::paths::state_dir().join("history")),
+            history_cap,
         })
     }
 
@@ -88,6 +101,10 @@ mod imp {
         /// Tail of each session's output, so a window that reconnects can
         /// rebuild the screen. Bytes only; the daemon never parses them.
         output: Arc<Mutex<HashMap<String, Tail>>>,
+        /// Append-only history files, keyed by session.
+        history: Arc<Mutex<HashMap<String, muis_daemon::history::HistoryFile>>>,
+        history_dir: PathBuf,
+        history_cap: u64,
     }
 
     /// Cap per session. Enough for a screen or three of history without
@@ -147,6 +164,9 @@ mod imp {
             next_slug: Arc::new(AtomicU64::new(1)),
             next_conn: Arc::new(AtomicU64::new(1)),
             output: Arc::new(Mutex::new(HashMap::new())),
+            history: Arc::new(Mutex::new(HashMap::new())),
+            history_dir: args.history_dir.clone(),
+            history_cap: args.history_cap,
         };
 
         let sink_shared = shared.clone();
@@ -158,6 +178,26 @@ mod imp {
                         .entry(event.session_id.clone())
                         .or_default()
                         .push(pty_id, &bytes);
+                    drop(output);
+                    if sink_shared.history_cap > 0 {
+                        let mut files = sink_shared.history.lock().unwrap();
+                        let entry = files.entry(event.session_id.clone()).or_insert_with(|| {
+                            muis_daemon::history::HistoryFile::open(
+                                &sink_shared.history_dir,
+                                &event.session_id,
+                                sink_shared.history_cap,
+                            )
+                            .unwrap_or_else(|_| {
+                                muis_daemon::history::HistoryFile::open(
+                                    std::env::temp_dir().as_path(),
+                                    "disabled",
+                                    0,
+                                )
+                                .expect("temp history")
+                            })
+                        });
+                        let _ = entry.append(&bytes);
+                    }
                 }
             }
             broadcast(&sink_shared.clients, &Reply::event(event));

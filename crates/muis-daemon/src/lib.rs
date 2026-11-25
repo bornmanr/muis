@@ -9,6 +9,7 @@
 //! the `MUIS_AGENT_BIN` sidecar hint), so nothing here knows about sockets or
 //! packaging.
 
+pub mod history;
 pub mod protocol;
 
 /// The socket a client and the daemon agree on: `$XDG_RUNTIME_DIR/muis`,

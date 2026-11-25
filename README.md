@@ -308,6 +308,14 @@ bash only gets the end marker: a start marker needs a `DEBUG` trap, which fires
 inside functions and pipelines, so the command line there still comes from
 muis' keystroke capture.
 
+## History
+
+The daemon appends each session's output to `<state>/muis/history/<session>.log`
+(8 MiB per session, one rotated `.log.1`, `--history-bytes 0` disables) so it
+survives both the process and the window. `muis-ctl history <query> [--limit N]`
+searches it case-insensitively, strips ANSI first so colour codes cannot split
+a match, and works with muis closed.
+
 ## Themes
 
 The built-ins (`default`, `tokyo-night`, `gruvbox`, `dracula`, `catppuccin`,

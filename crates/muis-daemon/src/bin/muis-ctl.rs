@@ -19,7 +19,9 @@ usage: muis-ctl [--socket PATH] <command>
   stop <session>     kill that session's worker
   send <session> <line>
                      forward one UiToWorker JSON line to that worker
-  ui <op> [json]     ask the attached window: ls, capture, focus, new-tab
+  ui <op> [json]     ask the attached window: ls, capture, ports, new-tab
+  history <query> [--limit N] [--dir PATH]
+                     search saved scrollback (default 20 hits)
 
 The socket defaults to the one muis uses ($XDG_RUNTIME_DIR/muis/daemon.sock).";
 
@@ -29,15 +31,30 @@ enum Command {
     Stop(String),
     Send(String, String),
     Ui(String, serde_json::Value),
+    History {
+        query: String,
+        limit: usize,
+        dir: Option<PathBuf>,
+    },
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<(Option<PathBuf>, Command), String> {
     let mut socket = None;
+    let mut limit = 20usize;
+    let mut dir = None;
     let mut positional: Vec<String> = Vec::new();
     let mut args = args;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--socket" => socket = Some(PathBuf::from(args.next().ok_or("--socket needs a path")?)),
+            "--limit" => {
+                limit = args
+                    .next()
+                    .ok_or("--limit needs a number")?
+                    .parse()
+                    .map_err(|_| "--limit needs a number")?
+            }
+            "--dir" => dir = Some(PathBuf::from(args.next().ok_or("--dir needs a path")?)),
             "-h" | "--help" => return Err(String::new()),
             other if other.starts_with('-') => return Err(format!("unknown argument: {other}")),
             other => positional.push(other.to_string()),
@@ -52,6 +69,10 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<(Option<PathBuf>, Co
             let session = rest.next().ok_or("send needs a session")?;
             let line = rest.next().ok_or("send needs a UiToWorker JSON line")?;
             Command::Send(session, line)
+        }
+        Some("history") => {
+            let query = rest.next().ok_or("history needs a query")?;
+            Command::History { query, limit, dir }
         }
         Some("ui") => {
             let op = rest.next().ok_or("ui needs an op")?;
@@ -93,6 +114,15 @@ fn main() {
 }
 
 fn run(socket: &PathBuf, command: Command) -> Result<(), String> {
+    if let Command::History { query, limit, dir } = &command {
+        // History is on disk, not on the socket: it works with muis closed.
+        let dir = dir
+            .clone()
+            .unwrap_or_else(|| muis_core::paths::state_dir().join("history"));
+        let hits = muis_daemon::history::search(&dir, query, *limit);
+        print!("{}", muis_daemon::history::render(&hits));
+        return Ok(());
+    }
     let mut stream = UnixStream::connect(socket).map_err(|e| e.to_string())?;
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -111,6 +141,8 @@ fn run(socket: &PathBuf, command: Command) -> Result<(), String> {
             op: op.clone(),
             args: args.clone(),
         },
+        // Answered from disk before a socket is ever opened.
+        Command::History { .. } => return Ok(()),
     };
     let text = serde_json::to_string(&request).map_err(|e| e.to_string())?;
     stream
@@ -121,6 +153,7 @@ fn run(socket: &PathBuf, command: Command) -> Result<(), String> {
     match &command {
         // Fire-and-forget verbs have no reply to wait for.
         Command::Stop(_) | Command::Send(..) => Ok(()),
+        Command::History { .. } => Ok(()),
         Command::Ui(..) => {
             let reply = read_reply(stream)?;
             match reply {
