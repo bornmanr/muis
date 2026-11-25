@@ -3498,6 +3498,52 @@ function renderSearchResults(): void {
     }
   }
   searchResults.style.display = "block";
+  // Closed sessions live on disk; the native window can read them.
+  if (IN_TAURI) void appendHistoryResults(q);
+}
+
+/* ---------------- history results ---------------- */
+
+interface HistoryHit {
+  session: string;
+  line: number;
+  text: string;
+}
+
+let historyTimer: number | undefined;
+let historySeq = 0;
+
+/**
+ * Append matches from saved scrollback, debounced and sequenced so a slow
+ * read cannot overwrite results for a newer query. Clicking copies the line:
+ * the session may not be open, and a silent jump would be worse than a copy.
+ */
+async function appendHistoryResults(query: string): Promise<void> {
+  window.clearTimeout(historyTimer);
+  const seq = ++historySeq;
+  historyTimer = window.setTimeout(async () => {
+    let hits: HistoryHit[] = [];
+    try {
+      hits = await shellCall<HistoryHit[]>("search_history", { query, limit: 20 });
+    } catch {
+      return;
+    }
+    if (seq !== historySeq || titleSearch.value.trim() !== query || !hits.length) return;
+    searchResults.append(el("div", "r-head", `History · ${hits.length}`));
+    for (const hit of hits) {
+      const item = el("div", "r-item history");
+      item.append(
+        el("div", "r-crumb", `${hit.session}:${hit.line}`),
+        el("div", "r-line", hit.text),
+      );
+      item.addEventListener("click", () => {
+        void copyText(hit.text);
+        hideSearchResults();
+      });
+      searchResults.append(item);
+    }
+    searchResults.style.display = "block";
+  }, 250);
 }
 
 function jumpToResult(hit: SearchHit, q: string): void {
