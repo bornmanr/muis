@@ -41,9 +41,11 @@ export class WorkerClient {
     onOutput: (data: Uint8Array) => void,
     onExit: (code: number | null) => void,
   ): Promise<void> {
-    await this.transport.spawn(sessionId);
+    // Handlers first: the daemon may answer the spawn with replayed output,
+    // and a frame that arrives before registration would be dropped.
     this.outputHandlers.set(ptyId, onOutput);
     this.exitHandlers.set(ptyId, onExit);
+    await this.transport.spawn(sessionId);
     if (this.spawned.has(ptyId)) return;
     this.spawned.add(ptyId);
     await this.transport.send(sessionId, { type: "spawn", pty_id: ptyId, shell, cwd, cols, rows });

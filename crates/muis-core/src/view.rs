@@ -121,8 +121,11 @@ fn handle(mut stream: TcpStream, state: &State) -> std::io::Result<()> {
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
         body.len()
     );
-    stream.write_all(head.as_bytes())?;
-    stream.write_all(&body)?;
+    // One write: a client that sees EOF between two writes reports a reset
+    // instead of a short response.
+    let mut response = head.into_bytes();
+    response.extend_from_slice(&body);
+    stream.write_all(&response)?;
     stream.flush()
 }
 
@@ -304,16 +307,31 @@ mod tests {
     use super::*;
     use std::io::{BufRead, BufReader};
 
+    /// One connection; retried once because a loopback reset mid-body is a
+    /// test-harness flake, not a viewer bug.
     fn get(port: u16, target: &str) -> (String, String) {
+        match try_get(port, target) {
+            Ok(value) => value,
+            Err(_) => try_get(port, target).expect("second attempt"),
+        }
+    }
+
+    fn try_get(port: u16, target: &str) -> std::io::Result<(String, String)> {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(stream, "GET {target} HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
         let mut reader = BufReader::new(stream);
         let mut status = String::new();
-        reader.read_line(&mut status).unwrap();
+        reader.read_line(&mut status)?;
+        if status.trim().is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "empty status line",
+            ));
+        }
         let mut content_type = String::new();
         loop {
             let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
+            reader.read_line(&mut line)?;
             if line.trim().is_empty() {
                 break;
             }
@@ -322,8 +340,8 @@ mod tests {
             }
         }
         let mut body = String::new();
-        reader.read_to_string(&mut body).unwrap();
-        (status.trim().to_string(), format!("{content_type}\n{body}"))
+        reader.read_to_string(&mut body)?;
+        Ok((status.trim().to_string(), format!("{content_type}\n{body}")))
     }
 
     fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {

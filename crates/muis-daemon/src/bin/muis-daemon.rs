@@ -19,7 +19,7 @@ fn main() {
 mod imp {
     use muis_daemon::protocol::{Reply, Request, Role};
     use muis_daemon::{default_socket, WorkerEnv, WorkerLaunch, WorkerPool};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::{UnixListener, UnixStream};
@@ -85,6 +85,29 @@ mod imp {
         pending: Arc<Mutex<HashMap<u64, (UnixStream, u64)>>>,
         next_slug: Arc<AtomicU64>,
         next_conn: Arc<AtomicU64>,
+        /// Tail of each session's output, so a window that reconnects can
+        /// rebuild the screen. Bytes only; the daemon never parses them.
+        output: Arc<Mutex<HashMap<String, Tail>>>,
+    }
+
+    /// Cap per session. Enough for a screen or three of history without
+    /// letting a chatty agent pin memory in the daemon.
+    const TAIL_BYTES: usize = 128 * 1024;
+
+    #[derive(Default)]
+    struct Tail {
+        pty_id: String,
+        bytes: VecDeque<u8>,
+    }
+
+    impl Tail {
+        fn push(&mut self, pty_id: &str, data: &[u8]) {
+            self.pty_id = pty_id.to_string();
+            self.bytes.extend(data);
+            while self.bytes.len() > TAIL_BYTES {
+                self.bytes.pop_front();
+            }
+        }
     }
 
     pub fn run() {
@@ -123,10 +146,20 @@ mod imp {
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_slug: Arc::new(AtomicU64::new(1)),
             next_conn: Arc::new(AtomicU64::new(1)),
+            output: Arc::new(Mutex::new(HashMap::new())),
         };
 
         let sink_shared = shared.clone();
         let sink = Arc::new(move |event: muis_daemon::SessionEvent| {
+            if let muis_core::ipc::WorkerToUi::Output { pty_id, data_b64 } = &event.frame {
+                if let Ok(bytes) = muis_core::ipc::b64_decode(data_b64) {
+                    let mut output = sink_shared.output.lock().unwrap();
+                    output
+                        .entry(event.session_id.clone())
+                        .or_default()
+                        .push(pty_id, &bytes);
+                }
+            }
             broadcast(&sink_shared.clients, &Reply::event(event));
             true
         });
@@ -236,10 +269,31 @@ mod imp {
                     }
                     None
                 }
-                Ok(Request::Spawn { session }) => pool
-                    .spawn_session(&session)
-                    .err()
-                    .map(|message| Reply::Error { message }),
+                Ok(Request::Spawn { session }) => match pool.spawn_session(&session) {
+                    Ok(()) => {
+                        // Replay what this session already printed, to this
+                        // client only: a fresh window gets its screen back
+                        // without disturbing anyone else.
+                        let tail = shared.output.lock().unwrap();
+                        if let Some(tail) = tail.get(&session) {
+                            if !tail.bytes.is_empty() {
+                                let data: Vec<u8> = tail.bytes.iter().copied().collect();
+                                broadcast_one(
+                                    &stream,
+                                    &Reply::Event {
+                                        session_id: session.clone(),
+                                        frame: muis_core::ipc::WorkerToUi::Output {
+                                            pty_id: tail.pty_id.clone(),
+                                            data_b64: muis_core::ipc::b64_encode(&data),
+                                        },
+                                    },
+                                );
+                            }
+                        }
+                        None
+                    }
+                    Err(message) => Some(Reply::Error { message }),
+                },
                 Ok(Request::Send { session, line }) => pool
                     .send_line(&session, &line)
                     .err()

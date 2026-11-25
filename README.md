@@ -236,6 +236,9 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
 - Zoom: Ctrl+= / Ctrl+- change the terminal font size live, Ctrl+0 resets;
   Ctrl+Shift+= / Ctrl+Shift+- scale the whole window for reading from a
   distance.
+- Reopening the window reconnects to the running workers and replays the last
+  128 KiB of each session's output above the fresh prompt, so a closed window
+  comes back readable instead of blank.
 - New tab in a worktree: the palette action creates `feature/<slug>` at
   `../.worktrees/<repo>-<slug>` (the repository's own convention), then opens
   a tab there. It refuses an existing directory, an existing branch, or a
