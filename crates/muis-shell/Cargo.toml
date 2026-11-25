@@ -14,6 +14,8 @@ tauri-plugin-notification = "2"
 # Same stack the Tauri plugin uses on Linux; we need the action callback so a
 # toast click can focus the tab it came from.
 notify-rust = "4"
+# Unity launcher progress (KDE Plasma and other task managers implement it).
+zbus = "5"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

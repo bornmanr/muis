@@ -994,7 +994,10 @@ function observeOsc(sessionId: string, tab: Tab, data: Uint8Array): void {
       commandTracker.onCmdStart(tabNow.id, cmd);
       reportDebugStage("cmd-start", { tab: tabNow.id, cmd });
       // A new command owns no old progress.
-      if (tabProgress.delete(tabNow.id)) changed = true;
+      if (tabProgress.delete(tabNow.id)) {
+        pushTaskbarProgress(null);
+        changed = true;
+      }
       // A new command means the previous completion is handled — unless the
       // tab is owned by an agent. There the mark belongs to the agent and only
       // a reply (`muis-notify --running`) or closing the tab may drop it: the
@@ -1009,14 +1012,20 @@ function observeOsc(sessionId: string, tab: Tab, data: Uint8Array): void {
       }
       renderCommandHead(tabNow.id);
     } else if (ev.type === "cmd-end") {
-      if (tabProgress.delete(tabNow.id)) changed = true;
+      if (tabProgress.delete(tabNow.id)) {
+        pushTaskbarProgress(null);
+        changed = true;
+      }
       finishCommand(tabNow.id, ev.exit);
     } else if (ev.type === "progress") {
       // OSC 9;4, emitted by long builds and by agents that report progress.
       if (ev.state === 0) {
         tabProgress.delete(tabNow.id);
+        pushTaskbarProgress(null);
       } else {
         tabProgress.set(tabNow.id, { state: ev.state, percent: ev.percent });
+        // The taskbar has no indeterminate bar; hide it rather than lie.
+        pushTaskbarProgress(ev.percent === null ? null : ev.percent / 100);
       }
       changed = true;
     } else if (ev.type === "agent-state") {
@@ -3077,6 +3086,19 @@ const doneTabs = new DoneTracker();
 const agentStates = new AgentStateTracker();
 /** OSC 9;4 progress per tab, in percent (null = indeterminate). */
 const tabProgress = new Map<string, { state: number; percent: number | null }>();
+/** Throttled mirror of the visible progress on the desktop taskbar. */
+let taskbarTimer: number | undefined;
+let taskbarFraction: number | null = null;
+
+function pushTaskbarProgress(fraction: number | null): void {
+  taskbarFraction = fraction;
+  if (taskbarTimer !== undefined) return;
+  taskbarTimer = window.setTimeout(() => {
+    taskbarTimer = undefined;
+    if (!IN_TAURI) return;
+    void shellCall("set_taskbar_progress", { percent: taskbarFraction }).catch(() => {});
+  }, 200);
+}
 const notifyRouter = new NotifyRouter();
 const idleFallback = new Map<string, number>();
 

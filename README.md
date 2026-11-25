@@ -236,6 +236,9 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
 - Zoom: Ctrl+= / Ctrl+- change the terminal font size live, Ctrl+0 resets;
   Ctrl+Shift+= / Ctrl+Shift+- scale the whole window for reading from a
   distance.
+- Progress reaches the desktop taskbar too: OSC 9;4 is mirrored through the
+  Unity LauncherEntry signal, which Plasma's task manager listens to. The tab
+  bar stays authoritative; the taskbar is hidden for indeterminate progress.
 - `muis_ports` / `muis-ctl ui ports`: TCP ports listening under a tab's
   directory, read from `/proc` (socket inode -> process -> cwd). Agents use it
   to tell whether a dev server actually came up.
