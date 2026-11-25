@@ -25,16 +25,6 @@ impl Drop for Daemon {
     }
 }
 
-fn fake_worker(dir: &Path) -> PathBuf {
-    write_worker(
-        dir,
-        "#!/bin/sh
-while IFS= read -r _line; do printf '{\"type\":\"spawned\",\"pty_id\":\"p1\"}
-'; done
-",
-    )
-}
-
 /// Write an executable shell script and return its path.
 fn write_worker(dir: &Path, script: &str) -> PathBuf {
     let path = dir.join("fake-worker.sh");
@@ -68,6 +58,9 @@ fn start_daemon_with(script: &str) -> Daemon {
         .arg(&socket)
         .arg("--worker")
         .arg(&worker)
+        // Keep test output out of the real state directory.
+        .arg("--history-dir")
+        .arg(dir.join("history"))
         // A test daemon must never exit under us.
         .args(["--idle-seconds", "0"])
         .env_remove("MUIS_SOCKET")
@@ -371,5 +364,46 @@ fn reattaching_replays_buffered_output() {
             assert_eq!(data_b64, "aGk=", "the buffered bytes are replayed");
         }
         other => panic!("expected a replay, got {other:?}"),
+    }
+}
+
+/// Output is also written to the history directory, where `muis-ctl history`
+/// can find it after the process is gone.
+#[test]
+fn output_is_saved_to_the_history_directory() {
+    let daemon = start_daemon_with(
+        "#!/bin/sh\nwhile IFS= read -r _line; do \
+         printf '{\"type\":\"output\",\"pty_id\":\"p1\",\"data_b64\":\"aGVsbG8K\"}\n'; done\n",
+    );
+    let (mut reader, mut stream) = connect(&daemon.socket);
+    send(
+        &mut stream,
+        &Request::Spawn {
+            session: "s1".into(),
+        },
+    );
+    send(
+        &mut stream,
+        &Request::Send {
+            session: "s1".into(),
+            line: r#"{"type":"write","pty_id":"p1","data_b64":""}"#.into(),
+        },
+    );
+    assert!(matches!(read_reply(&mut reader), Reply::Event { .. }));
+
+    let path = daemon.dir.join("history").join("s1.log");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if std::fs::read_to_string(&path)
+            .map(|t| t.contains("hello"))
+            .unwrap_or(false)
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "history file never got the output"
+        );
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
