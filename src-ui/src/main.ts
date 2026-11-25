@@ -2598,9 +2598,7 @@ function openPalette(): void {
   }
   add("settings", "Open settings", () => openSettings());
   add("inbox", "Needs you…", () => openInbox());
-  // The loopback viewer is a window feature for now; the browser host has no
-  // file route yet, so the action would only fail there.
-  if (!IS_SERVE) add("view-file", "View file…", () => promptViewFile());
+  if (BACKEND) add("view-file", "View file…", () => promptViewFile());
   add("zoom-in", "Zoom in", () => zoomTerminal(1));
   add("zoom-out", "Zoom out", () => zoomTerminal(-1));
   add("zoom-reset", "Reset zoom", () => resetZoom());
