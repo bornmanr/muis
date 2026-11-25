@@ -236,6 +236,10 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
 - Zoom: Ctrl+= / Ctrl+- change the terminal font size live, Ctrl+0 resets;
   Ctrl+Shift+= / Ctrl+Shift+- scale the whole window for reading from a
   distance.
+- New tab in a worktree: the palette action creates `feature/<slug>` at
+  `../.worktrees/<repo>-<slug>` (the repository's own convention), then opens
+  a tab there. It refuses an existing directory, an existing branch, or a
+  name that slugs to nothing.
 - View a local file: `muis-agent view README.md` (or the command palette's
   "View file…") renders an image,
   PDF, text, diff or markdown in the docked pane. It is served from a

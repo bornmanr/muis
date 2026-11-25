@@ -1645,6 +1645,27 @@ function renameTab(ws: Workspace, tab: Tab): void {
   }
 }
 
+/**
+ * New tab on its own branch: `feature/<slug>` at `../.worktrees/<repo>-<slug>`,
+ * the same convention the repository uses by hand. git does the work; the UI
+ * only supplies the tab's cwd and the name.
+ */
+async function newWorktreeTab(): Promise<void> {
+  const ws = store.currentWorkspace();
+  const tab = ws?.tabs[ws.active];
+  if (!ws || !tab) return;
+  const name = window.prompt("Worktree name (becomes feature/<slug>)");
+  if (!name) return;
+  try {
+    const path = await shellCall<string>("worktree_create", { cwd: tab.cwd, name });
+    store.newTab(`Worktree ${ws.tabs.length + 1}`, path);
+    renderAll();
+    focusActiveTerminal();
+  } catch (e) {
+    window.alert(`Cannot create worktree: ${String(e)}`);
+  }
+}
+
 /** Prompt for a #rrggbb accent; empty clears it back to the name hash. */
 function editTabColor(ws: Workspace, tab: Tab): void {
   const answer = window.prompt("Tab color (#rrggbb, empty clears)", tab.color ?? "");

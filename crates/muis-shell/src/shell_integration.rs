@@ -33,14 +33,6 @@ impl Shell {
         }
     }
 
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Fish => "fish",
-            Self::Zsh => "zsh",
-            Self::Bash => "bash",
-        }
-    }
-
     /// The rc file that gets the sourced block (fish uses conf.d instead).
     fn rc_file(self) -> &'static str {
         match self {
