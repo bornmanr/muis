@@ -59,6 +59,32 @@ pub async fn dispatch(ctx: Ctx, method: &str, args: &Value) -> Result<Value, Str
             Ok(Value::Null)
         }
 
+        "theme_packs" => Ok(muis_core::themes::packs_json(
+            &muis_core::paths::config_dir().join("muis").join("themes"),
+        )),
+
+        "search_history" => {
+            let query = args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(20)
+                .clamp(1, 200) as usize;
+            let dir = muis_core::paths::state_dir().join("history");
+            let hits = muis_daemon::history::search(&dir, query, limit);
+            Ok(serde_json::json!(hits
+                .iter()
+                .map(|hit| serde_json::json!({
+                    "session": hit.session,
+                    "line": hit.line,
+                    "text": hit.text,
+                }))
+                .collect::<Vec<_>>()))
+        }
+
         "config_load" => Ok(json!(store::read_text(&muis_core::paths::config_file())?)),
         "config_save" => {
             let json = arg_str(args, &["json"]).ok_or("config_save needs json")?;

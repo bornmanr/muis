@@ -16,7 +16,7 @@
 
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import { createConnection, createServer as createPipeServer } from "node:net";
@@ -248,6 +248,80 @@ async function opencodeSessions(cwd) {
   }
 }
 
+/* ------------------------------ parity helpers ----------------------------- */
+
+/** Theme packs from `<config>/themes/*.json`, same validation as muis-core. */
+function themePacks() {
+  const dir = path.join(configDir(), "themes");
+  let entries = [];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const isHex = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
+  const packs = [];
+  for (const entry of entries.sort()) {
+    if (!entry.endsWith(".json")) continue;
+    try {
+      const raw = JSON.parse(readFileSync(path.join(dir, entry), "utf8"));
+      if (typeof raw.name !== "string" || !raw.name.trim()) continue;
+      if (!isHex(raw.accent) || !isHex(raw.accent2) || !isHex(raw.green)) continue;
+      packs.push({
+        name: raw.name.trim(),
+        spec: {
+          accent: raw.accent,
+          accent2: raw.accent2,
+          green: raw.green,
+          promptPath: isHex(raw.promptPath) ? raw.promptPath : raw.green,
+        },
+      });
+    } catch {
+      /* one broken pack must not hide the others */
+    }
+  }
+  return packs;
+}
+
+/** Drop CSI/OSC sequences before matching, like muis-daemon::history. */
+function stripAnsi(text) {
+  return text
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "");
+}
+
+/** Case-insensitive search over saved scrollback. */
+function searchHistory(dir, query, limit) {
+  const needle = String(query ?? "").trim().toLowerCase();
+  if (!needle || limit <= 0) return [];
+  let entries = [];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const hits = [];
+  for (const entry of entries.sort()) {
+    if (!(entry.endsWith(".log") || entry.endsWith(".log.1"))) continue;
+    const session = entry.replace(/\.log(\.1)?$/, "");
+    let text = "";
+    try {
+      text = readFileSync(path.join(dir, entry), "utf8");
+    } catch {
+      continue;
+    }
+    const lines = text.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const clean = stripAnsi(lines[i]);
+      if (clean.toLowerCase().includes(needle)) {
+        hits.push({ session, line: i + 1, text: clean.replace(/\s+$/, "") });
+        if (hits.length >= limit) return hits;
+      }
+    }
+  }
+  return hits;
+}
+
 /* --------------------------------- rpc --------------------------------- */
 
 async function rpc(method, args, state) {
@@ -269,6 +343,16 @@ async function rpc(method, args, state) {
     case "debug_report":
       log("debug", `frontend report: ${args?.json ?? ""}`);
       return null;
+
+    case "theme_packs":
+      return themePacks();
+
+    case "search_history":
+      return searchHistory(
+        path.join(stateDir(), "history"),
+        args?.query ?? "",
+        Math.max(1, Math.min(200, Number(args?.limit) || 20)),
+      );
 
     case "config_load":
       return readText(path.join(configDir(), "muis.json"));

@@ -9,5 +9,6 @@ pub mod notify;
 pub mod paths;
 pub mod ports;
 pub mod shell;
+pub mod themes;
 pub mod view;
 pub mod worktree;
