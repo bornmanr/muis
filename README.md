@@ -241,7 +241,11 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
   bar stays authoritative; the taskbar is hidden for indeterminate progress.
 - `muis_ports` / `muis-ctl ui ports`: TCP ports listening under a tab's
   directory, read from `/proc` (socket inode -> process -> cwd). Agents use it
-  to tell whether a dev server actually came up.
+  to tell whether a dev server actually came up. The browser hosts answer the
+  same way on Linux and an empty list elsewhere.
+- The viewer, theme packs, history search, port listing and worktree tabs work
+  in the native window and the browser hosts alike; the viewer runs its own
+  tokenised loopback listener in each host.
 - Reopening the window reconnects to the running workers and replays the last
   128 KiB of each session's output above the fresh prompt, so a closed window
   comes back readable instead of blank.

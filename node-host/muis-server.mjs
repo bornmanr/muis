@@ -14,9 +14,9 @@
  * WebSocket per tab carries the same `{session_id, frame}` worker frames.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import { createConnection, createServer as createPipeServer } from "node:net";
@@ -248,6 +248,221 @@ async function opencodeSessions(cwd) {
   }
 }
 
+/* --------------------------- file viewer --------------------------- */
+
+/** Loopback viewer with a token and an allow-list, same rules as muis-core. */
+const VIEWER_TYPES = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  avif: "image/avif",
+  pdf: "application/pdf",
+  md: "text/markdown; charset=utf-8",
+  markdown: "text/markdown; charset=utf-8",
+};
+
+let viewer = null;
+let viewerPort = null;
+
+function viewerInfo() {
+  if (viewer) return viewer;
+  const token = randomBytes(16).toString("hex");
+  viewer = { token, allowed: new Set() };
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    if (url.pathname !== "/view") {
+      res.writeHead(404).end("404 Not Found");
+      return;
+    }
+    if (url.searchParams.get("t") !== viewer.token) {
+      res.writeHead(403).end("403 Forbidden");
+      return;
+    }
+    const file = url.searchParams.get("p") ?? "";
+    if (!viewer.allowed.has(file)) {
+      res.writeHead(403).end("403 Forbidden");
+      return;
+    }
+    let body;
+    try {
+      body = readFileSync(file);
+    } catch {
+      res.writeHead(404).end("404 Not Found");
+      return;
+    }
+    const ext = file.split(".").pop()?.toLowerCase() ?? "";
+    const type = VIEWER_TYPES[ext] ?? "text/plain; charset=utf-8";
+    if (type.startsWith("text/markdown")) body = Buffer.from(markdownPage(body.toString("utf8")));
+    res.writeHead(200, {
+      "Content-Type": type,
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.end(body);
+  });
+  server.listen(0, "127.0.0.1");
+  viewerPort = new Promise((resolve) => server.once("listening", () => resolve(server.address().port)));
+  return viewer;
+}
+
+async function viewFile(pathArg) {
+  const resolved = realpathSync(pathArg);
+  const stat = statSync(resolved);
+  if (!stat.isFile()) throw new Error(`${resolved} is not a file`);
+  if (stat.size > 8 * 1024 * 1024) throw new Error("the viewer stops at 8 MB");
+  const info = viewerInfo();
+  info.allowed.add(resolved);
+  const port = await viewerPort;
+  return `http://127.0.0.1:${port}/view?t=${info.token}&p=${encodeURIComponent(resolved)}`;
+}
+
+/** Same tiny renderer the Rust host ships: headings, code fences, emphasis. */
+function markdownPage(source) {
+  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+  const inline = (s) =>
+    esc(s)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  const out = [];
+  let code = false;
+  for (const line of source.split(/\r?\n/)) {
+    if (line.startsWith("```")) {
+      out.push(code ? "</code></pre>" : "<pre><code>");
+      code = !code;
+      continue;
+    }
+    if (code) {
+      out.push(esc(line));
+      continue;
+    }
+    const head = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (head) {
+      out.push(`<h${head[1].length}>${inline(head[2])}</h${head[1].length}>`);
+      continue;
+    }
+    if (/^\s*[-*]\s+/.test(line)) {
+      out.push(`<li>${inline(line.replace(/^\s*[-*]\s+/, ""))}</li>`);
+      continue;
+    }
+    if (!line.trim()) continue;
+    out.push(`<p>${inline(line)}</p>`);
+  }
+  if (code) out.push("</code></pre>");
+  return `<!doctype html><meta charset="utf-8"><style>
+:root{color-scheme:dark}
+body{margin:0;padding:24px 32px;background:#1d2023;color:#fcfcfc;font:15px/1.6 system-ui,sans-serif;max-width:900px}
+h1,h2,h3{color:#3daee9;line-height:1.25}
+code{background:#2d3237;padding:1px 4px;border-radius:3px}
+pre{background:#232629;border:1px solid #3a4147;border-radius:6px;padding:12px;overflow:auto}
+pre code{background:none;padding:0}
+</style><body>${out.join("\n")}`;
+}
+
+/* ----------------------------- ports ----------------------------- */
+
+/** Listening ports owned by processes whose cwd is inside `cwd`. */
+function listeningUnder(cwd) {
+  if (process.platform !== "linux") return [];
+  let base = cwd;
+  try {
+    base = realpathSync(cwd);
+  } catch {
+    /* keep the given path */
+  }
+  const listeners = [];
+  for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    let text = "";
+    try {
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n").slice(1)) {
+      const cols = line.trim().split(/\s+/);
+      if (cols.length < 10 || cols[3] !== "0A") continue;
+      const port = parseInt(cols[1].split(":").pop(), 16);
+      const inode = Number(cols[9]);
+      if (Number.isFinite(port) && inode > 0) listeners.push({ port, inode });
+    }
+  }
+  const owners = new Map();
+  let pids = [];
+  try {
+    pids = readdirSync("/proc");
+  } catch {
+    return [];
+  }
+  for (const pid of pids) {
+    if (!/^\d+$/.test(pid)) continue;
+    let fds = [];
+    try {
+      fds = readdirSync(`/proc/${pid}/fd`);
+    } catch {
+      continue;
+    }
+    for (const fd of fds) {
+      let target = "";
+      try {
+        target = readlinkSync(`/proc/${pid}/fd/${fd}`);
+      } catch {
+        continue;
+      }
+      const match = /^socket:\[(\d+)\]$/.exec(target);
+      if (match) owners.set(Number(match[1]), Number(pid));
+    }
+  }
+  const prefix = base.endsWith("/") ? base : `${base}/`;
+  const ports = new Set();
+  for (const listener of listeners) {
+    const pid = owners.get(listener.inode);
+    if (!pid) continue;
+    let dir = "";
+    try {
+      dir = readlinkSync(`/proc/${pid}/cwd`);
+    } catch {
+      continue;
+    }
+    if (dir === base || dir.startsWith(prefix)) ports.add(listener.port);
+  }
+  return [...ports].sort((a, b) => a - b);
+}
+
+/* ---------------------------- worktrees ---------------------------- */
+
+function slugifyWorktree(name) {
+  const slug = String(name)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length >= 1 && slug.length <= 48 ? slug : null;
+}
+
+function gitOut(cwd, args) {
+  const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error((result.stderr || "git failed").trim());
+  return result.stdout ?? "";
+}
+
+function worktreeCreate(cwd, name) {
+  const slug = slugifyWorktree(name);
+  if (!slug) throw new Error("use letters or digits in the worktree name");
+  const repo = gitOut(cwd, ["rev-parse", "--show-toplevel"]).trim();
+  const branch = `feature/${slug}`;
+  const target = path.join(path.dirname(repo), ".worktrees", `${path.basename(repo)}-${slug}`);
+  if (existsSync(target)) throw new Error(`${target} already exists`);
+  if (gitOut(repo, ["branch", "--list", branch]).trim()) {
+    throw new Error(`branch ${branch} already exists`);
+  }
+  const base = gitOut(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+  mkdirSync(path.dirname(target), { recursive: true });
+  gitOut(repo, ["worktree", "add", "-b", branch, target, base]);
+  return target;
+}
+
 /* ------------------------------ parity helpers ----------------------------- */
 
 /** Theme packs from `<config>/themes/*.json`, same validation as muis-core. */
@@ -343,6 +558,15 @@ async function rpc(method, args, state) {
     case "debug_report":
       log("debug", `frontend report: ${args?.json ?? ""}`);
       return null;
+
+    case "view_file":
+      return viewFile(String(args?.path ?? ""));
+
+    case "list_ports":
+      return listeningUnder(String(args?.cwd ?? "/"));
+
+    case "worktree_create":
+      return worktreeCreate(String(args?.cwd ?? ""), String(args?.name ?? ""));
 
     case "theme_packs":
       return themePacks();

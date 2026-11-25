@@ -85,6 +85,45 @@ pub async fn dispatch(ctx: Ctx, method: &str, args: &Value) -> Result<Value, Str
                 .collect::<Vec<_>>()))
         }
 
+        "view_file" => {
+            use std::sync::OnceLock;
+            static VIEWER: OnceLock<Result<muis_core::view::ViewServer, String>> = OnceLock::new();
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("view_file needs a path")?;
+            let viewer = VIEWER
+                .get_or_init(|| {
+                    muis_core::view::ViewServer::start()
+                        .map_err(|e| format!("viewer unavailable: {e}"))
+                })
+                .as_ref()
+                .map_err(|e| e.clone())?;
+            viewer
+                .url_for(std::path::Path::new(path))
+                .map(serde_json::Value::String)
+        }
+
+        "list_ports" => {
+            let cwd = args.get("cwd").and_then(|v| v.as_str()).unwrap_or("/");
+            Ok(serde_json::json!(muis_core::ports::listening_under(
+                std::path::Path::new(cwd)
+            )))
+        }
+
+        "worktree_create" => {
+            let cwd = args
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .ok_or("worktree_create needs a cwd")?;
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("worktree_create needs a name")?;
+            muis_core::worktree::create(std::path::Path::new(cwd), name)
+                .map(|path| serde_json::Value::String(path.display().to_string()))
+        }
+
         "config_load" => Ok(json!(store::read_text(&muis_core::paths::config_file())?)),
         "config_save" => {
             let json = arg_str(args, &["json"]).ok_or("config_save needs json")?;
