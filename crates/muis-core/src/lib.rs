@@ -9,3 +9,4 @@ pub mod notify;
 pub mod paths;
 pub mod shell;
 pub mod view;
+pub mod worktree;

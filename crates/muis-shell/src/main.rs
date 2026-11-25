@@ -77,6 +77,16 @@ fn view_file(path: String) -> Result<String, String> {
     viewer_url(&path)
 }
 
+/// Create a worktree for a new tab and return its path.
+///
+/// The frontend passes the active tab's cwd and a name; the rest (repo root,
+/// branch, location) is git's answer, never a shell string.
+#[tauri::command]
+fn worktree_create(cwd: String, name: String) -> Result<String, String> {
+    muis_core::worktree::create(std::path::Path::new(&cwd), &name)
+        .map(|path| path.display().to_string())
+}
+
 #[tauri::command]
 fn ping() -> String {
     "pong".to_string()
@@ -682,6 +692,7 @@ fn main() {
             opencode_sessions,
             list_subdirs,
             open_url,
+            worktree_create,
             view_file,
             notify_clickable,
             worker_spawn,
