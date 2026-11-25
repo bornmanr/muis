@@ -33,6 +33,7 @@ import { DoneTracker, sidebarAttention, tabAttentionLabel, type Attention } from
 import { AgentStateTracker, agentLabel, isAgentState, stateChip, type AgentState } from "./agentState";
 import { shouldPark } from "./park";
 import { sessionPayload, tailLines, trimTrailingBlank } from "./controlops";
+import { opencodeCommand, tabTitleFor } from "./agentTab";
 import { NotifyRouter, notifyEventFromCli, notifyEventFromCommand, type CliNotify } from "./notify";
 import {
   isInjectedResume,
@@ -1675,6 +1676,25 @@ async function newWorktreeTab(): Promise<void> {
   }
 }
 
+/**
+ * A tab that is already working on something: opencode starts with the task
+ * as its first prompt, and the tab is named from the task.
+ */
+async function newAgentTab(task: string): Promise<string | undefined> {
+  const ws = store.currentWorkspace();
+  if (!ws) return undefined;
+  const id = store.newTab(tabTitleFor(task), newTabCwd(ws));
+  if (!id) return undefined;
+  const tab = ws.tabs.find((t) => t.id === id);
+  if (tab) tab.manual = true;
+  renderAll();
+  // Wait for the shell prompt before typing; the command is quoted so the
+  // task can never become shell syntax.
+  await waitForTabOutput(id, 3000);
+  await client.write(ws.id, id, enc.encode(`${opencodeCommand(task)}\n`)).catch(() => {});
+  return id;
+}
+
 /** Prompt for a #rrggbb accent; empty clears it back to the name hash. */
 function editTabColor(ws: Workspace, tab: Tab): void {
   const answer = window.prompt("Tab color (#rrggbb, empty clears)", tab.color ?? "");
@@ -2960,6 +2980,14 @@ async function handleUiRequest(req: {
         const url = await shellCall<string>("view_file", { path });
         if (!openPreview(url)) throw new Error("the pane refused the viewer URL");
         result = { url };
+        break;
+      }
+      case "new-agent-tab": {
+        const task = String(req.args?.task ?? "").trim();
+        if (!task) throw new Error("new-agent-tab needs a task");
+        const id = await newAgentTab(task);
+        if (!id) throw new Error("no session to open the tab in");
+        result = { tab: id };
         break;
       }
       case "ports": {
