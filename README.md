@@ -242,6 +242,9 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
 - Reopening the window reconnects to the running workers and replays the last
   128 KiB of each session's output above the fresh prompt, so a closed window
   comes back readable instead of blank.
+- New agent tab: the palette action takes a one-line task, names the tab from
+  it, and starts `opencode --prompt '<task>'` once the shell is ready. The task
+  is POSIX single-quoted, so quotes and `$(...)` in it stay data.
 - New tab in a worktree: the palette action creates `feature/<slug>` at
   `../.worktrees/<repo>-<slug>` (the repository's own convention), then opens
   a tab there. It refuses an existing directory, an existing branch, or a
