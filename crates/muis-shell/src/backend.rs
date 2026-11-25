@@ -14,6 +14,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Forwards a daemon-routed UI request to the frontend. The frontend answers
+/// through the `ui_reply` command, which writes back on the same connection.
+pub type UiSink = Arc<dyn Fn(u64, String, serde_json::Value) + Send + Sync + 'static>;
+
 /// The shell's worker backend. Same three operations either way, so the
 /// Tauri commands do not care which one is live.
 pub enum Backend {
@@ -23,8 +27,8 @@ pub enum Backend {
 
 impl Backend {
     /// Prefer the daemon; fall back to the in-process pool.
-    pub fn connect(sink: EventSink, worker: Option<PathBuf>, env: WorkerEnv) -> Self {
-        match DaemonClient::connect(&sink, worker.as_deref(), &env) {
+    pub fn connect(sink: EventSink, ui: UiSink, worker: Option<PathBuf>, env: WorkerEnv) -> Self {
+        match DaemonClient::connect(&sink, &ui, worker.as_deref(), &env) {
             Some(client) => {
                 log::info!("using muis-daemon for worker ownership");
                 Self::Daemon(client)
@@ -55,6 +59,15 @@ impl Backend {
         }
     }
 
+    /// Forward the frontend's answer to the daemon. Local mode never receives
+    /// UI requests, so there is nothing to answer.
+    pub fn ui_reply(&self, id: u64, ok: bool, result: serde_json::Value) -> Result<(), String> {
+        match self {
+            Self::Daemon(client) => client.ui_reply(id, ok, result),
+            Self::Local(_) => Ok(()),
+        }
+    }
+
     pub fn stop_session(&self, session: &str) {
         match self {
             Self::Daemon(client) => {
@@ -78,15 +91,31 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
-    fn connect(sink: &EventSink, worker: Option<&Path>, env: &WorkerEnv) -> Option<Self> {
+    fn connect(
+        sink: &EventSink,
+        ui: &UiSink,
+        worker: Option<&Path>,
+        env: &WorkerEnv,
+    ) -> Option<Self> {
         let socket = default_socket();
         if UnixStream::connect(&socket).is_err() {
             let worker = worker?;
             spawn_daemon(&socket, worker, env)?;
         }
-        let stream = connect_with_retry(&socket)?;
+        let mut stream = connect_with_retry(&socket)?;
+        // Registering before the reader starts means no forwarded request can
+        // arrive before the frontend is listening for it.
+        let hello = serde_json::to_string(&Request::Hello {
+            role: muis_daemon::protocol::Role::Ui,
+        })
+        .ok()?;
+        stream
+            .write_all(format!("{hello}\n").as_bytes())
+            .and_then(|()| stream.flush())
+            .ok()?;
         let reader = stream.try_clone().ok()?;
         let sink = Arc::clone(sink);
+        let ui = Arc::clone(ui);
         let pending = Arc::new(Mutex::new(None::<String>));
         let pending_reader = Arc::clone(&pending);
         std::thread::spawn(move || {
@@ -117,9 +146,8 @@ impl DaemonClient {
                     Ok(Reply::Status { .. }) => {}
                     // Forwarded UI requests land here once the window
                     // registers as a UI client; until then they are ignored.
-                    Ok(Reply::UiRequest { .. })
-                    | Ok(Reply::UiReply { .. })
-                    | Ok(Reply::Hello { .. }) => {}
+                    Ok(Reply::UiRequest { id, op, args }) => ui(id, op, args),
+                    Ok(Reply::UiReply { .. }) | Ok(Reply::Hello { .. }) => {}
                     Err(e) => log::debug!("muis-daemon: undecodable reply: {e}"),
                 }
             }
@@ -129,6 +157,11 @@ impl DaemonClient {
             stream: Mutex::new(stream),
             pending,
         })
+    }
+
+    /// The frontend's answer to a forwarded request.
+    pub fn ui_reply(&self, id: u64, ok: bool, result: serde_json::Value) -> Result<(), String> {
+        self.request(&Request::UiReply { id, ok, result })
     }
 
     fn request(&self, request: &Request) -> Result<(), String> {

@@ -19,6 +19,7 @@ usage: muis-ctl [--socket PATH] <command>
   stop <session>     kill that session's worker
   send <session> <line>
                      forward one UiToWorker JSON line to that worker
+  ui <op> [json]     ask the attached window: ls, capture, focus, new-tab
 
 The socket defaults to the one muis uses ($XDG_RUNTIME_DIR/muis/daemon.sock).";
 
@@ -27,6 +28,7 @@ enum Command {
     Status,
     Stop(String),
     Send(String, String),
+    Ui(String, serde_json::Value),
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<(Option<PathBuf>, Command), String> {
@@ -50,6 +52,14 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<(Option<PathBuf>, Co
             let session = rest.next().ok_or("send needs a session")?;
             let line = rest.next().ok_or("send needs a UiToWorker JSON line")?;
             Command::Send(session, line)
+        }
+        Some("ui") => {
+            let op = rest.next().ok_or("ui needs an op")?;
+            let args = match rest.next() {
+                Some(raw) => serde_json::from_str(&raw).map_err(|e| format!("bad json: {e}"))?,
+                None => serde_json::Value::Null,
+            };
+            Command::Ui(op, args)
         }
         Some(other) => return Err(format!("unknown command: {other}")),
         None => return Err("missing command".into()),
@@ -96,6 +106,11 @@ fn run(socket: &PathBuf, command: Command) -> Result<(), String> {
             session: session.clone(),
             line: line.clone(),
         },
+        Command::Ui(op, args) => Request::Ui {
+            id: 1,
+            op: op.clone(),
+            args: args.clone(),
+        },
     };
     let text = serde_json::to_string(&request).map_err(|e| e.to_string())?;
     stream
@@ -106,6 +121,17 @@ fn run(socket: &PathBuf, command: Command) -> Result<(), String> {
     match &command {
         // Fire-and-forget verbs have no reply to wait for.
         Command::Stop(_) | Command::Send(..) => Ok(()),
+        Command::Ui(..) => {
+            let reply = read_reply(stream)?;
+            match reply {
+                Reply::Error { message } => return Err(message),
+                other => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&reply_json(other)).unwrap_or_default()
+                ),
+            }
+            Ok(())
+        }
         Command::Ls => {
             let reply = read_reply(stream)?;
             print_sessions(reply);
@@ -183,5 +209,8 @@ mod tests {
         assert!(parse(&["send", "s1"]).is_err());
         assert!(parse(&["ls", "extra"]).is_err());
         assert!(parse(&["--socket"]).is_err());
+        assert!(matches!(parse(&["ui", "ls"]).unwrap().1, Command::Ui(op, _) if op == "ls"));
+        assert!(parse(&["ui"]).is_err());
+        assert!(parse(&["ui", "capture", "{oops"]).is_err());
     }
 }

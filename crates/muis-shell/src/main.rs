@@ -538,6 +538,17 @@ fn worker_stop(pool: tauri::State<Backend>, session_id: String) {
     pool.stop_session(&session_id);
 }
 
+/// The frontend's answer to a forwarded UI request.
+#[tauri::command]
+fn ui_reply(
+    pool: tauri::State<Backend>,
+    id: u64,
+    ok: bool,
+    result: serde_json::Value,
+) -> Result<(), String> {
+    pool.ui_reply(id, ok, result)
+}
+
 /// NVIDIA + KWin explicit sync kills WebKitGTK's dmabuf fast path with
 /// "explicit sync is used, but no acquire point is set" (native Wayland
 /// only; XWayland never hits it). Fall back to shared-memory compositing
@@ -589,7 +600,8 @@ fn main() {
             notify_clickable,
             worker_spawn,
             worker_send,
-            worker_stop
+            worker_stop,
+            ui_reply
         ])
         .setup(|app| {
             log::info!(
@@ -615,8 +627,18 @@ fn main() {
 
             let handle = app.handle().clone();
             let sink: EventSink = Arc::new(move |event| handle.emit(WORKER_EVENT, &event).is_ok());
+            // Forwarded control requests go to the frontend, which owns tabs,
+            // scrollback and agent state; it answers via `ui_reply`.
+            let ui_handle = app.handle().clone();
+            let ui: backend::UiSink = Arc::new(move |id, op, args| {
+                let _ = ui_handle.emit(
+                    "muis-ui-request",
+                    serde_json::json!({ "id": id, "op": op, "args": args }),
+                );
+            });
             app.handle().manage(Backend::connect(
                 sink,
+                ui,
                 launch.map(|WorkerLaunch(path)| path),
                 env_for_shell(),
             ));
