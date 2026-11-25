@@ -285,6 +285,19 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
   that refuse framing get the ↗ button, which hands the URL to the system
   browser.
 
+## Releases
+
+`auto-release` runs daily at 12:00 Africa/Johannesburg (10:00 UTC). If `main`
+has commits since the last `v*` tag and main CI is green, it opens a single
+`chore: release vX.Y.Z` pull request that bumps `crates/muis-shell/tauri.conf.json`.
+Merging it is the release trigger: `tag-release` waits for main CI, then
+dispatches the release workflow for that version, which builds, signs and
+publishes the Linux tarball. The release workflow also still accepts a pushed
+`v*` tag, as long as the tag matches `tauri.conf.json`.
+
+Veldmuis's `muis-release-watch` proposes its own pin bump from the signed
+release.
+
 ## MCP
 
 `muis-mcp` speaks MCP over stdio and exposes the control surface as tools:

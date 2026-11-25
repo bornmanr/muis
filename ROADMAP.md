@@ -52,15 +52,20 @@ Legend: `[x]` settled+locked · `[~]` decided, needs test · `[ ]` open.
 
 - [ ] D12b: daemon forwards UI verbs (`new-tab`, `focus`, `capture`, `inbox`)
       to the attached window and correlates the reply by id.
-- [ ] D13: `muis mcp` mapping capture/wait/view/open_url onto the same verbs.
-- [ ] D10: scriptable browser pane (navigate, snapshot, click, console).
+- [x] D13: `muis mcp` mapping capture/focus/view/open_url onto the same verbs.
+- [~] D10 retired: the pane is an iframe, so the same-origin policy forbids
+      scripting it (a dev server on another port is another origin). Use
+      Playwright or chrome-devtools MCP for browser automation instead; a
+      CDP-driven pane would be a separate project.
 - [ ] P2 tail: replay buffered output on attach, then scrollback to disk with
       retention and cross-session search (needs the P2 hand test first).
-- [ ] Auto-release: a scheduled workflow at 12:00 Africa/Johannesburg
-      (10:00 UTC) that tags and releases `vX.Y.Z` when main has commits since
-      the last tag and main CI is green. The version in
-      `crates/muis-shell/tauri.conf.json` must be bumped in the same run, and
-      the release workflow only accepts a tag that matches it.
+- [x] Auto-release: `auto-release` runs at 12:00 Africa/Johannesburg
+      (10:00 UTC) and, when main has commits since the last tag and main CI is
+      green, opens one `chore: release vX.Y.Z` pull request that bumps
+      `crates/muis-shell/tauri.conf.json`. `tag-release` then dispatches the
+      release workflow once main is green, because a tag pushed with
+      `GITHUB_TOKEN` would not start one. Veldmuis's own release watch picks
+      the signed release up afterwards.
 - [ ] P4: shell-integration installer, documented config + theme packs,
       worktree-per-tab, task launcher, memory conventions.
 
