@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { MUIS_THEME, colorFor, sessionColorMap, xtermTheme, themeNames, THEMES } from "./theme";
+import {
+  MUIS_THEME,
+  colorFor,
+  registerThemePacks,
+  sessionColorMap,
+  themeNames,
+  xtermTheme,
+  THEMES,
+} from "./theme";
 
 /**
  * Locks the look to ../wezterm-web/index.html. Restyle there first,
@@ -66,5 +74,19 @@ describe("muis theme", () => {
     expect(nord.cursor).toBe("#88c0d0");
     expect(nord.blue).toBe("#88c0d0");
     expect(nord.background).toBe(MUIS_THEME.termBg);
+  });
+
+  it("registers theme packs and ignores invalid accents", () => {
+    const before = themeNames().length;
+    registerThemePacks({
+      ember: { accent: "#ec5b2b", accent2: "#ee7948", green: "#7fd88f", promptPath: "#e5c07b" },
+      broken: { accent: "red", accent2: "#123456", green: "#123456", promptPath: "#123456" },
+    });
+    expect(themeNames()).toContain("ember");
+    expect(themeNames()).not.toContain("broken");
+    expect(themeNames().length).toBe(before + 1);
+    // A pack feeds the terminal theme exactly like a built-in.
+    expect(xtermTheme("ember").cursor).toBe("#ec5b2b");
+    expect(THEMES.ember.promptPath).toBe("#e5c07b");
   });
 });

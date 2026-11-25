@@ -305,6 +305,21 @@ bash only gets the end marker: a start marker needs a `DEBUG` trap, which fires
 inside functions and pipelines, so the command line there still comes from
 muis' keystroke capture.
 
+## Themes
+
+The built-ins (`default`, `tokyo-night`, `gruvbox`, `dracula`, `catppuccin`,
+`nord`, `veldmuis`, `orng`) live in code. Drop a pack in
+`~/.config/muis/themes/*.json` and it appears in settings:
+
+```json
+{ "name": "ember", "accent": "#ec5b2b", "accent2": "#ee7948", "green": "#7fd88f" }
+```
+
+`accent`, `accent2` and `green` are required `#rrggbb` values; `promptPath` is
+optional and falls back to `green`. An invalid file is skipped with a log line
+rather than hiding the other packs. Packs load before the configured theme is
+applied, so a pack name in `muis.json` works on first paint.
+
 ## Releases
 
 `auto-release` runs daily at 12:00 Africa/Johannesburg (10:00 UTC). If `main`

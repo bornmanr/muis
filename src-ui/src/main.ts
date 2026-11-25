@@ -7,7 +7,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SessionStore, newTabCwd, type Tab, type Workspace } from "./sessions";
-import { xtermTheme, colorFor, sessionColorMap, applyTheme, themeNames, MUIS_THEME } from "./theme";
+import {
+  xtermTheme,
+  colorFor,
+  sessionColorMap,
+  applyTheme,
+  registerThemePacks,
+  themeNames,
+  MUIS_THEME,
+  type ThemeSpec,
+} from "./theme";
 import { defaultConfig, configFromJSON, clampScrollback, bellAction, effectiveFontSize, segmentVisible, themeForWorkspace, type AppConfig } from "./config";
 import { clampIndex, filterCommands, type Command } from "./commands";
 import { QueryHistory } from "./history";
@@ -2287,11 +2296,37 @@ optFontSize.max = "32";
 optFontSize.placeholder = "System";
 optFontSize.title = "Empty = default size";
 const optTheme = document.createElement("select");
-for (const name of themeNames()) {
-  const o = document.createElement("option");
-  o.value = name;
-  o.textContent = name;
-  optTheme.append(o);
+/** Rebuilt after theme packs load, keeping the current choice. */
+function populateThemeOptions(): void {
+  const current = optTheme.value;
+  optTheme.innerHTML = "";
+  for (const name of themeNames()) {
+    const o = document.createElement("option");
+    o.value = name;
+    o.textContent = name;
+    optTheme.append(o);
+  }
+  if (current) optTheme.value = current;
+}
+populateThemeOptions();
+
+/**
+ * Load `~/.config/muis/themes/*.json`. Native only for now: the browser hosts
+ * have no command for it, so they keep the built-in themes.
+ */
+async function loadThemePacks(): Promise<void> {
+  if (!IN_TAURI) return;
+  try {
+    const packs = await invoke<{ name: string; spec: ThemeSpec }[]>("theme_packs");
+    if (!packs.length) return;
+    const map: Record<string, ThemeSpec> = {};
+    for (const pack of packs) map[pack.name] = pack.spec;
+    registerThemePacks(map);
+    populateThemeOptions();
+    reportDebugStage("theme-packs-loaded", packs.map((p) => p.name));
+  } catch {
+    /* packs are optional */
+  }
 }
 const optScrollback = document.createElement("input");
 optScrollback.type = "number";
@@ -3674,6 +3709,9 @@ async function init(): Promise<void> {
   // Only mint a default session on a fresh start. An empty resumed store
   // means the user closed every session and quit that way on purpose.
   if (store.workspaces.length === 0 && !resumed) store.ensureDefault("home", home);
+  // Packs must land before the configured theme is applied, or a pack name
+  // would silently fall back to the default accent.
+  await loadThemePacks();
   applyTheme(cfg.theme);
   renderAll();
   startRestoredAgents();

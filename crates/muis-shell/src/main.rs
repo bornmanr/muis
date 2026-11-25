@@ -94,6 +94,76 @@ fn list_ports(cwd: String) -> Vec<u16> {
     muis_core::ports::listening_under(std::path::Path::new(&cwd))
 }
 
+/// Theme packs from `<config>/muis/themes/*.json`.
+///
+/// Each file is `{ "name": "...", "accent": "#rrggbb", "accent2": ...,
+/// "green": ..., "promptPath": ... }`. Invalid files are skipped rather than
+/// failing the whole list, so one typo cannot hide every pack.
+#[tauri::command]
+fn theme_packs() -> serde_json::Value {
+    theme_packs_in(&config_dir().join("muis").join("themes"))
+}
+
+fn theme_packs_in(dir: &Path) -> serde_json::Value {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return serde_json::json!([]);
+    };
+    let mut packs = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(raw) = serde_json::from_str::<serde_json::Value>(&text) else {
+            log::warn!("theme pack {} is not JSON", path.display());
+            continue;
+        };
+        let Some(name) = raw.get("name").and_then(|n| n.as_str()).map(str::trim) else {
+            continue;
+        };
+        let color = |key: &str| {
+            raw.get(key)
+                .and_then(|v| v.as_str())
+                .filter(|v| valid_hex(v))
+                .map(str::to_string)
+        };
+        let (Some(accent), Some(accent2), Some(green)) =
+            (color("accent"), color("accent2"), color("green"))
+        else {
+            log::warn!(
+                "theme pack {} needs accent/accent2/green as #rrggbb",
+                path.display()
+            );
+            continue;
+        };
+        packs.push(serde_json::json!({
+            "name": name,
+            "spec": {
+                "accent": accent,
+                "accent2": accent2,
+                "green": green,
+                "promptPath": color("promptPath").unwrap_or_else(|| green.clone()),
+            }
+        }));
+    }
+    serde_json::Value::Array(packs)
+}
+
+fn valid_hex(value: &str) -> bool {
+    value.len() == 7 && value.starts_with('#') && value[1..].bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// `$XDG_CONFIG_HOME/claude`-style base, matching `muis-core` paths.
+fn config_dir() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from(".config"))
+}
+
 #[tauri::command]
 fn ping() -> String {
     "pong".to_string()
@@ -699,6 +769,7 @@ fn main() {
             opencode_sessions,
             list_subdirs,
             open_url,
+            theme_packs,
             list_ports,
             worktree_create,
             view_file,
@@ -796,6 +867,39 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_packs_read_valid_files_and_skip_the_rest() {
+        let dir = std::env::temp_dir().join(format!("muis-themes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("good.json"),
+            r##"{"name":"ember","accent":"#ec5b2b","accent2":"#ee7948","green":"#7fd88f"}"##,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("partial.json"),
+            r##"{"name":"partial","accent":"#123456"}"##,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("bad.json"),
+            r##"{"name":"bad","accent":"red","accent2":"#123456","green":"#123456"}"##,
+        )
+        .unwrap();
+        std::fs::write(dir.join("notes.txt"), "not a pack").unwrap();
+
+        let packs = theme_packs_in(&dir);
+        let list = packs.as_array().unwrap();
+        assert_eq!(list.len(), 1, "only the complete, valid pack survives");
+        assert_eq!(list[0]["name"], "ember");
+        assert_eq!(
+            list[0]["spec"]["promptPath"], "#7fd88f",
+            "promptPath falls back to green"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn opencode_plugin_name_is_loadable_and_ours() {
