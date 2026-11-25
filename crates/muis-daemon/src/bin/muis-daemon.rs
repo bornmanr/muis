@@ -91,9 +91,11 @@ mod imp {
     #[derive(Clone)]
     struct Shared {
         clients: Arc<Mutex<Vec<UnixStream>>>,
-        /// The attached window: connection id plus its stream, so a window
-        /// that reconnects replaces the old one instead of stacking.
-        ui: Arc<Mutex<Option<(u64, UnixStream)>>>,
+        /// Attached windows, oldest first. Several windows can share one
+        /// daemon; a request goes to the newest, which is the one the user
+        /// most recently opened. A window that reconnects replaces its own
+        /// entry rather than stacking.
+        ui: Arc<Mutex<Vec<(u64, UnixStream)>>>,
         /// Forwarded request slug -> (caller stream, caller's own id).
         pending: Arc<Mutex<HashMap<u64, (UnixStream, u64)>>>,
         next_slug: Arc<AtomicU64>,
@@ -159,7 +161,7 @@ mod imp {
 
         let shared = Shared {
             clients: Arc::new(Mutex::new(Vec::new())),
-            ui: Arc::new(Mutex::new(None)),
+            ui: Arc::new(Mutex::new(Vec::new())),
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_slug: Arc::new(AtomicU64::new(1)),
             next_conn: Arc::new(AtomicU64::new(1)),
@@ -242,12 +244,14 @@ mod imp {
             let last_empty = Arc::clone(&last_empty);
             std::thread::spawn(move || {
                 serve_client(stream, pool, shared.clone(), conn_id);
-                if let Some((id, _)) = shared.ui.lock().unwrap().as_ref() {
-                    if *id == conn_id {
-                        // The window went away; do not forward into a dead
-                        // socket, and say so to the next caller.
-                        *shared.ui.lock().unwrap() = None;
-                        eprintln!("muis-daemon: window detached");
+                {
+                    // The window went away; drop its slot so requests go to a
+                    // live window instead of a dead socket.
+                    let mut windows = shared.ui.lock().unwrap();
+                    let before = windows.len();
+                    windows.retain(|(id, _)| *id != conn_id);
+                    if windows.len() != before {
+                        eprintln!("muis-daemon: window detached ({} alive)", windows.len());
                     }
                 }
                 client_count.fetch_sub(1, Ordering::SeqCst);
@@ -265,9 +269,10 @@ mod imp {
             let reply = match serde_json::from_str::<Request>(&line) {
                 Ok(Request::Hello { role }) => {
                     if role == Role::Ui {
-                        *shared.ui.lock().unwrap() =
-                            Some((conn_id, stream.try_clone().expect("clone ui")));
-                        eprintln!("muis-daemon: window attached");
+                        let mut windows = shared.ui.lock().unwrap();
+                        windows.retain(|(id, _)| *id != conn_id);
+                        windows.push((conn_id, stream.try_clone().expect("clone ui")));
+                        eprintln!("muis-daemon: window attached ({} alive)", windows.len());
                     }
                     // Acknowledge so the client knows it is registered before
                     // it relies on that (and tests never race the accept).
@@ -278,7 +283,7 @@ mod imp {
                         .ui
                         .lock()
                         .unwrap()
-                        .as_ref()
+                        .last()
                         .and_then(|(_, s)| s.try_clone().ok());
                     match ui {
                         Some(ui) => {

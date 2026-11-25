@@ -407,3 +407,75 @@ fn output_is_saved_to_the_history_directory() {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// Two windows can share the daemon; the newest one answers, so opening a
+/// second window does not leave the first one receiving requests forever.
+#[test]
+fn the_newest_window_answers_ui_requests() {
+    let daemon = start_daemon();
+
+    let (mut first_reader, mut first) = connect(&daemon.socket);
+    send(&mut first, &Request::Hello { role: Role::Ui });
+    assert!(matches!(read_reply(&mut first_reader), Reply::Hello { .. }));
+
+    let (mut caller_reader, mut caller) = connect(&daemon.socket);
+    send(
+        &mut caller,
+        &Request::Ui {
+            id: 1,
+            op: "ls".into(),
+            args: serde_json::Value::Null,
+        },
+    );
+    let slug = match read_reply(&mut first_reader) {
+        Reply::UiRequest { id, .. } => id,
+        other => panic!("the only window should answer, got {other:?}"),
+    };
+    send(
+        &mut first,
+        &Request::UiReply {
+            id: slug,
+            ok: true,
+            result: serde_json::json!("first"),
+        },
+    );
+    assert!(matches!(
+        read_reply(&mut caller_reader),
+        Reply::UiReply { .. }
+    ));
+
+    // A second window registers; it now answers, not the first.
+    let (mut second_reader, mut second) = connect(&daemon.socket);
+    send(&mut second, &Request::Hello { role: Role::Ui });
+    assert!(matches!(
+        read_reply(&mut second_reader),
+        Reply::Hello { .. }
+    ));
+
+    send(
+        &mut caller,
+        &Request::Ui {
+            id: 2,
+            op: "ls".into(),
+            args: serde_json::Value::Null,
+        },
+    );
+    match read_reply(&mut second_reader) {
+        Reply::UiRequest { id, .. } => send(
+            &mut second,
+            &Request::UiReply {
+                id,
+                ok: true,
+                result: serde_json::json!("second"),
+            },
+        ),
+        other => panic!("the newest window should answer, got {other:?}"),
+    }
+    match read_reply(&mut caller_reader) {
+        Reply::UiReply { id, result, .. } => {
+            assert_eq!(id, 2);
+            assert_eq!(result, serde_json::json!("second"));
+        }
+        other => panic!("unexpected reply: {other:?}"),
+    }
+}
