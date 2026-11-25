@@ -91,6 +91,4 @@ jobs:
 
           gh pr create --base main --head "${branch}" \
             --title "chore: release v${NEXT}" \
-            --body "Automated version bump: \`${LATEST}\` -> \`v${NEXT}\`.
-
-Merging this is the release trigger: once main CI is green, \`tag-release\` runs the release workflow for \`v${NEXT}\`, which builds, signs and publishes the Linux tarball. Veldmuis's release watch then proposes its own pin bump."
+            --body "Automated version bump: ${LATEST} -> v${NEXT}. Merging this is the release trigger: once main CI is green, tag-release runs the release workflow for v${NEXT}, which builds, signs and publishes the Linux tarball. Veldmuis's release watch then proposes its own pin bump."
