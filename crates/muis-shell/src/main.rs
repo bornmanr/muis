@@ -13,6 +13,7 @@ mod backend;
 mod bridge;
 mod logging;
 mod persist;
+mod shell_integration;
 
 use backend::Backend;
 use bridge::{env_for_shell, EventSink, WorkerLaunch, WORKER_EVENT};
@@ -564,7 +565,92 @@ fn ensure_dmabuf_disabled() -> bool {
     }
 }
 
+/// `muis shell-integration install|uninstall|print [--shell NAME]`.
+///
+/// Returns `None` for a normal launch, so the window still starts.
+fn shell_integration_cli(mut args: impl Iterator<Item = String>) -> Option<i32> {
+    if args.next().as_deref() != Some("shell-integration") {
+        return None;
+    }
+    let mut command: Option<String> = None;
+    let mut shell: Option<shell_integration::Shell> = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--shell" => {
+                let Some(name) = args.next() else {
+                    eprintln!("muis: --shell needs a name");
+                    return Some(2);
+                };
+                shell = shell_integration::Shell::parse(&name);
+                if shell.is_none() {
+                    eprintln!("muis: unsupported shell: {name} (fish, zsh, bash)");
+                    return Some(2);
+                }
+            }
+            "-h" | "--help" => {
+                println!(
+                    "usage: muis shell-integration <install|uninstall|print> [--shell fish|zsh|bash]"
+                );
+                return Some(0);
+            }
+            other if command.is_none() => command = Some(other.to_string()),
+            other => {
+                eprintln!("muis: unexpected argument: {other}");
+                return Some(2);
+            }
+        }
+    }
+    let shell = shell.or_else(|| {
+        std::env::var("SHELL")
+            .ok()
+            .and_then(|s| shell_integration::Shell::parse(&s))
+    });
+    let Some(shell) = shell else {
+        eprintln!("muis: cannot tell the shell; pass --shell fish|zsh|bash");
+        return Some(2);
+    };
+    let home = match std::env::var_os("HOME") {
+        Some(home) => PathBuf::from(home),
+        None => {
+            eprintln!("muis: HOME is not set");
+            return Some(2);
+        }
+    };
+    let result = match command.as_deref() {
+        Some("install") => shell_integration::install(&home, shell),
+        Some("uninstall") => shell_integration::uninstall(&home, shell),
+        Some("print") => {
+            print!("{}", shell_integration::snippet(shell));
+            return Some(0);
+        }
+        Some(other) => {
+            eprintln!("muis: unknown command: {other}");
+            return Some(2);
+        }
+        None => {
+            eprintln!("muis: shell-integration needs a command (install, uninstall, print)");
+            return Some(2);
+        }
+    };
+    match result {
+        Ok(files) => {
+            for file in files {
+                println!("{}", file.display());
+            }
+            Some(0)
+        }
+        Err(e) => {
+            eprintln!("muis: {e}");
+            Some(1)
+        }
+    }
+}
+
 fn main() {
+    // CLI modes exit before Tauri starts; a normal launch falls through.
+    if let Some(code) = shell_integration_cli(std::env::args().skip(1)) {
+        std::process::exit(code);
+    }
     if let Some(path) = logging::init() {
         log::info!("muis shell starting; log file: {}", path.display());
     }

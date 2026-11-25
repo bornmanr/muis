@@ -285,6 +285,16 @@ recorded, and `window.__muisDebug()` snapshots tabs and sessions.
   that refuse framing get the ↗ button, which hands the URL to the system
   browser.
 
+## Shell integration
+
+`muis shell-integration install` writes OSC 133 command markers for fish, zsh
+or bash (`--shell` overrides `$SHELL`); `uninstall` removes them and restores
+the rc file byte-for-byte; `print` shows the snippet without touching anything.
+fish gets a `conf.d` file, zsh and bash a sourced file plus one marked block.
+bash only gets the end marker: a start marker needs a `DEBUG` trap, which fires
+inside functions and pipelines, so the command line there still comes from
+muis' keystroke capture.
+
 ## Releases
 
 `auto-release` runs daily at 12:00 Africa/Johannesburg (10:00 UTC). If `main`
