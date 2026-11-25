@@ -62,7 +62,7 @@ jobs:
           set -euo pipefail
           staging="muis-${VERSION}-x86_64-linux"
           mkdir -p "${staging}/icons"
-          cp target/release/muis target/release/muis-daemon target/release/muis-ctl target/release/muis-worker target/release/muis-notify target/release/muis-agent "${staging}/"
+          cp target/release/muis target/release/muis-daemon target/release/muis-ctl target/release/muis-mcp target/release/muis-worker target/release/muis-notify target/release/muis-agent "${staging}/"
           cp data/muis.desktop "${staging}/"
           cp data/icons/hicolor/512x512/apps/muis.png "${staging}/icons/muis.png"
           cp -r data/fastfetch "${staging}/fastfetch"
