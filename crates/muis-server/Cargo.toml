@@ -16,6 +16,7 @@ serde_json = "1"
 log = "0.4"
 simplelog = "0.12"
 muis-core = { path = "../muis-core" }
+muis-daemon = { path = "../muis-daemon" }
 muis-worker = { path = "../muis-worker" }
 muis-notify = { path = "../muis-notify" }
 muis-agent = { path = "../muis-agent" }

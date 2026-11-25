@@ -2340,13 +2340,13 @@ function populateThemeOptions(): void {
 populateThemeOptions();
 
 /**
- * Load `~/.config/muis/themes/*.json`. Native only for now: the browser hosts
- * have no command for it, so they keep the built-in themes.
+ * Load `~/.config/muis/themes/*.json` on every host; the browser hosts read
+ * the same directory through their RPC surface.
  */
 async function loadThemePacks(): Promise<void> {
-  if (!IN_TAURI) return;
+  if (!BACKEND) return;
   try {
-    const packs = await invoke<{ name: string; spec: ThemeSpec }[]>("theme_packs");
+    const packs = await shellCall<{ name: string; spec: ThemeSpec }[]>("theme_packs");
     if (!packs.length) return;
     const map: Record<string, ThemeSpec> = {};
     for (const pack of packs) map[pack.name] = pack.spec;
@@ -3520,8 +3520,8 @@ function renderSearchResults(): void {
     }
   }
   searchResults.style.display = "block";
-  // Closed sessions live on disk; the native window can read them.
-  if (IN_TAURI) void appendHistoryResults(q);
+  // Closed sessions live on disk; every host can read them.
+  if (BACKEND) void appendHistoryResults(q);
 }
 
 /* ---------------- history results ---------------- */

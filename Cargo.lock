@@ -2245,6 +2245,7 @@ dependencies = [
  "log",
  "muis-agent",
  "muis-core",
+ "muis-daemon",
  "muis-notify",
  "muis-worker",
  "serde",

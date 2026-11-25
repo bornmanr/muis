@@ -323,7 +323,8 @@ a match, and works with muis closed.
 
 The built-ins (`default`, `tokyo-night`, `gruvbox`, `dracula`, `catppuccin`,
 `nord`, `veldmuis`, `orng`) live in code. Drop a pack in
-`~/.config/muis/themes/*.json` and it appears in settings:
+`~/.config/muis/themes/*.json` and it appears in settings, in the native window
+and in the browser hosts alike:
 
 ```json
 { "name": "ember", "accent": "#ec5b2b", "accent2": "#ee7948", "green": "#7fd88f" }
