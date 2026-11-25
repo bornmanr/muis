@@ -164,6 +164,23 @@ fn config_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".config"))
 }
 
+/// Search saved scrollback for the find bar. Disk-only, so it also covers
+/// sessions that are no longer open.
+#[tauri::command]
+fn search_history(query: String, limit: usize) -> serde_json::Value {
+    let dir = muis_core::paths::state_dir().join("history");
+    let hits = muis_daemon::history::search(&dir, &query, limit.clamp(1, 200));
+    serde_json::json!(
+        hits.iter()
+            .map(|hit| serde_json::json!({
+                "session": hit.session,
+                "line": hit.line,
+                "text": hit.text,
+            }))
+            .collect::<Vec<_>>()
+    )
+}
+
 #[tauri::command]
 fn ping() -> String {
     "pong".to_string()
@@ -769,6 +786,7 @@ fn main() {
             opencode_sessions,
             list_subdirs,
             open_url,
+            search_history,
             theme_packs,
             list_ports,
             worktree_create,
