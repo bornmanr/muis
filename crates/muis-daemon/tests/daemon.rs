@@ -26,12 +26,19 @@ impl Drop for Daemon {
 }
 
 fn fake_worker(dir: &Path) -> PathBuf {
-    let path = dir.join("fake-worker.sh");
-    std::fs::write(
-        &path,
-        "#!/bin/sh\nwhile IFS= read -r _line; do printf '{\"type\":\"spawned\",\"pty_id\":\"p1\"}\\n'; done\n",
+    write_worker(
+        dir,
+        "#!/bin/sh
+while IFS= read -r _line; do printf '{\"type\":\"spawned\",\"pty_id\":\"p1\"}
+'; done
+",
     )
-    .unwrap();
+}
+
+/// Write an executable shell script and return its path.
+fn write_worker(dir: &Path, script: &str) -> PathBuf {
+    let path = dir.join("fake-worker.sh");
+    std::fs::write(&path, script).unwrap();
     let mut perms = std::fs::metadata(&path).unwrap().permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(&path, perms).unwrap();
@@ -43,12 +50,19 @@ fn fake_worker(dir: &Path) -> PathBuf {
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 fn start_daemon() -> Daemon {
+    start_daemon_with(
+        "#!/bin/sh\nwhile IFS= read -r _line; do printf '{\"type\":\"spawned\",\"pty_id\":\"p1\"}\\n'; done\n",
+    )
+}
+
+/// Same daemon, a worker that answers differently; used by the replay test.
+fn start_daemon_with(script: &str) -> Daemon {
     let n = NEXT.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!("muis-daemon-test-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let socket = dir.join("daemon.sock");
-    let worker = fake_worker(&dir);
+    let worker = write_worker(&dir, script);
     let child = Command::new(env!("CARGO_BIN_EXE_muis-daemon"))
         .arg("--socket")
         .arg(&socket)
@@ -298,5 +312,64 @@ fn ui_request_without_a_window_answers_an_error() {
     match read_reply(&mut reader) {
         Reply::Error { message } => assert!(message.contains("no window attached"), "{message}"),
         other => panic!("unexpected reply: {other:?}"),
+    }
+}
+
+/// A window that reconnects gets the session's recent output before anything
+/// else, without spawning a second worker.
+#[test]
+fn reattaching_replays_buffered_output() {
+    let daemon = start_daemon_with(
+        "#!/bin/sh\nwhile IFS= read -r _line; do \
+         printf '{\"type\":\"spawned\",\"pty_id\":\"p1\"}\n'; \
+         printf '{\"type\":\"output\",\"pty_id\":\"p1\",\"data_b64\":\"aGk=\"}\n'; done\n",
+    );
+
+    let (mut reader, mut stream) = connect(&daemon.socket);
+    send(
+        &mut stream,
+        &Request::Spawn {
+            session: "s1".into(),
+        },
+    );
+    send(
+        &mut stream,
+        &Request::Send {
+            session: "s1".into(),
+            line: r#"{"type":"write","pty_id":"p1","data_b64":""}"#.into(),
+        },
+    );
+    assert!(matches!(
+        read_reply(&mut reader),
+        Reply::Event {
+            frame: muis_core::ipc::WorkerToUi::Spawned { .. },
+            ..
+        }
+    ));
+    match read_reply(&mut reader) {
+        Reply::Event {
+            frame: muis_core::ipc::WorkerToUi::Output { data_b64, .. },
+            ..
+        } => assert_eq!(data_b64, "aGk="),
+        other => panic!("expected the worker's output, got {other:?}"),
+    }
+
+    // A second window attaches: the tail comes back to it only.
+    let (mut reader2, mut stream2) = connect(&daemon.socket);
+    send(
+        &mut stream2,
+        &Request::Spawn {
+            session: "s1".into(),
+        },
+    );
+    match read_reply(&mut reader2) {
+        Reply::Event {
+            session_id,
+            frame: muis_core::ipc::WorkerToUi::Output { data_b64, .. },
+        } => {
+            assert_eq!(session_id, "s1");
+            assert_eq!(data_b64, "aGk=", "the buffered bytes are replayed");
+        }
+        other => panic!("expected a replay, got {other:?}"),
     }
 }
