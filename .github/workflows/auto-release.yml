@@ -1,0 +1,96 @@
+name: auto-release
+
+# 12:00 Africa/Johannesburg (SAST, UTC+2, no DST). The job only proposes a
+# version bump: the bump lands as a pull request, the maintainer merges it,
+# and `tag-release` publishes once main is green. That keeps `main` protected
+# and the release auditable.
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    name: Propose the next release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether a release is due
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          latest="$(git tag --list 'v*' --sort=-v:refname | head -1)"
+          if [[ -n "${latest}" ]]; then
+            commits="$(git rev-list "${latest}..HEAD" --count)"
+          else
+            commits=1
+          fi
+
+          head="$(git rev-parse HEAD)"
+          green="$(gh run list --workflow ci.yml --branch main --limit 30 \
+            --json headSha,status,conclusion \
+            --jq "[.[] | select(.headSha == \"${head}\" and .status == \"completed\" and .conclusion == \"success\")] | length")"
+
+          version="$(python3 -c "import json;print(json.load(open('crates/muis-shell/tauri.conf.json'))['version'])")"
+          IFS=. read -r major minor patch <<< "${version}"
+          next="${major}.${minor}.$((patch + 1))"
+
+          {
+            echo "latest=${latest:-none}"
+            echo "version=${version}"
+            echo "next=${next}"
+          } >> "${GITHUB_OUTPUT}"
+
+          if [[ "${commits}" -eq 0 ]]; then
+            echo "No commits since ${latest:-the beginning}; nothing to release."
+            echo "release=false" >> "${GITHUB_OUTPUT}"
+          elif [[ "${green}" -eq 0 ]]; then
+            echo "main CI is not green for ${head}; waiting for the next run."
+            echo "release=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "Proposing v${next} (${commits} commits since ${latest:-none})."
+            echo "release=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Open the release pull request
+        if: steps.decide.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT: ${{ steps.decide.outputs.next }}
+          LATEST: ${{ steps.decide.outputs.latest }}
+        run: |
+          set -euo pipefail
+          branch="chore/release-v${NEXT}"
+          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+            echo "A release pull request for v${NEXT} is already open; leaving it alone."
+            exit 0
+          fi
+
+          git config user.name "muis release bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "${branch}"
+          sed -i "s/\"version\": \"[0-9][0-9.]*\"/\"version\": \"${NEXT}\"/" crates/muis-shell/tauri.conf.json
+          grep -q "\"version\": \"${NEXT}\"" crates/muis-shell/tauri.conf.json
+          git add crates/muis-shell/tauri.conf.json
+          git commit -m "chore: release v${NEXT}"
+          git push origin "${branch}"
+
+          gh pr create --base main --head "${branch}" \
+            --title "chore: release v${NEXT}" \
+            --body "Automated version bump: \`${LATEST}\` -> \`v${NEXT}\`.
+
+Merging this is the release trigger: once main CI is green, \`tag-release\` runs the release workflow for \`v${NEXT}\`, which builds, signs and publishes the Linux tarball. Veldmuis's release watch then proposes its own pin bump."
