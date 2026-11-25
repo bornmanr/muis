@@ -143,6 +143,18 @@ export const THEMES: Record<string, ThemeSpec> = {
   },
 };
 
+/**
+ * Merge user theme packs (`~/.config/muis/themes/*.json`) into the built-ins.
+ * A pack may override a built-in name on purpose; invalid ones never reach
+ * here (the shell validates them).
+ */
+export function registerThemePacks(packs: Record<string, ThemeSpec>): void {
+  for (const [name, spec] of Object.entries(packs)) {
+    if (!name || !/^#[0-9a-f]{6}$/i.test(spec.accent)) continue;
+    THEMES[name] = spec;
+  }
+}
+
 export function themeNames(): string[] {
   return Object.keys(THEMES);
 }
