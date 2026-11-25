@@ -170,15 +170,51 @@ fn config_dir() -> PathBuf {
 fn search_history(query: String, limit: usize) -> serde_json::Value {
     let dir = muis_core::paths::state_dir().join("history");
     let hits = muis_daemon::history::search(&dir, &query, limit.clamp(1, 200));
-    serde_json::json!(
-        hits.iter()
-            .map(|hit| serde_json::json!({
-                "session": hit.session,
-                "line": hit.line,
-                "text": hit.text,
-            }))
-            .collect::<Vec<_>>()
-    )
+    serde_json::json!(hits
+        .iter()
+        .map(|hit| serde_json::json!({
+            "session": hit.session,
+            "line": hit.line,
+            "text": hit.text,
+        }))
+        .collect::<Vec<_>>())
+}
+
+/// Reflect a tab's progress on the desktop taskbar.
+///
+/// The Unity LauncherEntry signal is what Plasma's task manager (and a few
+/// others) listen to. `None` hides the bar. Best-effort: no session bus or no
+/// listener is not an error worth surfacing.
+#[tauri::command]
+fn set_taskbar_progress(percent: Option<f64>) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::collections::HashMap;
+        use zbus::zvariant::Value;
+        let Ok(conn) = zbus::blocking::Connection::session() else {
+            return;
+        };
+        let mut props: HashMap<&str, Value<'_>> = HashMap::new();
+        match percent {
+            Some(value) => {
+                props.insert("progress", Value::from(value.clamp(0.0, 1.0)));
+                props.insert("progress-visible", Value::from(true));
+            }
+            None => {
+                props.insert("progress", Value::from(0.0));
+                props.insert("progress-visible", Value::from(false));
+            }
+        }
+        let _ = conn.emit_signal(
+            Option::<&str>::None,
+            "/com/canonical/Unity/LauncherEntry",
+            "com.canonical.Unity.LauncherEntry",
+            "Update",
+            &("application://muis.desktop", props),
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = percent;
 }
 
 #[tauri::command]
@@ -787,6 +823,7 @@ fn main() {
             list_subdirs,
             open_url,
             search_history,
+            set_taskbar_progress,
             theme_packs,
             list_ports,
             worktree_create,
