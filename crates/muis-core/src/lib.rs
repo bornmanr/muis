@@ -7,6 +7,7 @@ pub mod config;
 pub mod ipc;
 pub mod notify;
 pub mod paths;
+pub mod ports;
 pub mod shell;
 pub mod view;
 pub mod worktree;

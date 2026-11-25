@@ -194,6 +194,7 @@ mod imp {
         match tool {
             "muis_capture" => "capture",
             "muis_ls" => "ls",
+            "muis_ports" => "ports",
             "muis_focus" => "focus",
             "muis_new_tab" => "new-tab",
             "muis_view" => "view",

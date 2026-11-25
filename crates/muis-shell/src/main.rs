@@ -87,6 +87,13 @@ fn worktree_create(cwd: String, name: String) -> Result<String, String> {
         .map(|path| path.display().to_string())
 }
 
+/// Listening TCP ports whose owner lives in (or below) `cwd`. Read-only
+/// `/proc` scraping, used for the tab tooltip and the control surface.
+#[tauri::command]
+fn list_ports(cwd: String) -> Vec<u16> {
+    muis_core::ports::listening_under(std::path::Path::new(&cwd))
+}
+
 #[tauri::command]
 fn ping() -> String {
     "pong".to_string()
@@ -692,6 +699,7 @@ fn main() {
             opencode_sessions,
             list_subdirs,
             open_url,
+            list_ports,
             worktree_create,
             view_file,
             notify_clickable,

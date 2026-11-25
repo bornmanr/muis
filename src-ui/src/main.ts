@@ -2927,6 +2927,13 @@ async function handleUiRequest(req: {
         result = { url };
         break;
       }
+      case "ports": {
+        const tab = tabByIdOrActive(req.args?.tab);
+        if (!tab) throw new Error("no such tab");
+        const ports = await shellCall<number[]>("list_ports", { cwd: tab.cwd });
+        result = { tab: tab.id, cwd: tab.cwd, ports };
+        break;
+      }
       case "open-url": {
         const raw = String(req.args?.url ?? "");
         if (!openPreview(raw)) throw new Error(`not an http(s) URL: ${raw}`);
